@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>项目管理软件</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-gray-50 h-screen flex flex-col overflow-hidden">
+    <!-- 顶部导航 -->
+    <header class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                </svg>
+            </div>
+            <h1 class="text-xl font-bold text-gray-800">项目管理系统</h1>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <!-- 同步状态 -->
+            <div id="syncStatus" class="text-xs text-gray-400 hidden"></div>
+
+            <!-- 同步按钮组 -->
+            <div class="flex bg-gray-100 rounded-lg p-1">
+                <button onclick="app.syncToGist()" class="px-2.5 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700 flex items-center gap-1" title="把本地数据推送到云端">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    推送
+                </button>
+                <button onclick="app.loadFromGist()" class="px-2.5 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700 flex items-center gap-1" title="从云端拉取最新数据">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path></svg>
+                    拉取
+                </button>
+                <button onclick="app.openSyncModal()" class="px-2.5 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700 flex items-center gap-1" title="云端同步设置">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    设置
+                </button>
+            </div>
+
+            <!-- 日历类型切换 -->
+            <div id="calendarToggle" class="hidden flex bg-gray-100 rounded-lg p-1">
+                <button onclick="app.setCalendarType('month')" id="btnMonth" class="px-3 py-1.5 text-sm rounded-md transition-all bg-white shadow-sm text-gray-800 font-medium">月历</button>
+                <button onclick="app.setCalendarType('week')" id="btnWeek" class="px-3 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700">周历</button>
+            </div>
+
+            <!-- 视图切换 -->
+            <div class="flex bg-gray-100 rounded-lg p-1">
+                <button onclick="app.setView('table')" id="btnTable" class="px-3 py-1.5 text-sm rounded-md transition-all bg-white shadow-sm text-gray-800 font-medium flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    表格
+                </button>
+                <button onclick="app.setView('calendar')" id="btnCalendar" class="px-3 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700 flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    日历
+                </button>
+                <button onclick="app.setView('archive')" id="btnArchive" class="px-3 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700 flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                    归档
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主体区域 -->
+    <div class="flex flex-1 overflow-hidden">
+        <!-- 左侧树形面板 -->
+        <aside id="sidebar" class="bg-white border-r border-gray-200 flex flex-col flex-shrink-0" style="width:300px">
+            <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <h2 class="font-semibold text-gray-700">项目结构</h2>
+                <div class="flex items-center gap-1">
+                    <button onclick="app.addCustomer()" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        新增
+                    </button>
+                    <button onclick="app.toggleSidebar()" class="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100" title="收起侧栏">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+                    </button>
+                </div>
+            </div>
+            <div id="treeContainer" class="flex-1 overflow-y-auto p-2">
+                <!-- 动态生成树 -->
+            </div>
+        </aside>
+
+        <!-- 拖拽调节宽度手柄 -->
+        <div id="resizeHandle" class="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize transition-colors flex-shrink-0 relative group">
+            <div class="absolute inset-y-0 -left-1 -right-1"></div>
+        </div>
+
+        <!-- 右侧内容区 -->
+        <main id="mainContent" class="flex-1 overflow-auto p-6">
+            <!-- 动态内容 -->
+        </main>
+    </div>
+
+    <!-- 侧栏展开按钮（收起时显示） -->
+    <button id="sidebarExpandBtn" class="hidden fixed left-0 top-1/2 -translate-y-1/2 z-40 bg-white border border-gray-200 border-l-0 rounded-r-lg shadow-sm p-2 hover:bg-blue-50 hover:text-blue-600 text-gray-500 transition-colors" onclick="app.toggleSidebar()">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path></svg>
+    </button>
+
+    <!-- 编辑项目模态框 -->
+    <div id="projectModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl w-[500px] max-w-[90%] max-h-[90vh] overflow-hidden flex flex-col">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 id="modalTitle" class="text-lg font-semibold text-gray-800">编辑项目</h3>
+                <button onclick="app.closeModal()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="px-6 py-4 overflow-y-auto flex-1">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">项目名称</label>
+                        <input type="text" id="projectName" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+                            <input type="date" id="projectStart" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
+                            <input type="date" id="projectEnd" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">项目简介</label>
+                        <textarea id="projectDesc" rows="4" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+                <button onclick="app.closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                <button onclick="app.saveProject()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通用输入模态框 -->
+    <div id="inputModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl w-[400px] max-w-[90%]">
+            <div class="px-6 py-4 border-b border-gray-100">
+                <h3 id="inputModalTitle" class="text-lg font-semibold text-gray-800">新建</h3>
+            </div>
+            <div class="px-6 py-4">
+                <input type="text" id="inputModalField" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="请输入名称">
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+                <button onclick="app.closeInputModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                <button onclick="app.saveInputModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建任务模态框（日历拖拽用） -->
+    <div id="taskModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl w-[450px] max-w-[90%]">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-800">新建任务</h3>
+                <button onclick="app.closeTaskModal()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="px-6 py-4 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">任务名称</label>
+                    <input type="text" id="taskName" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">任务描述</label>
+                    <textarea id="taskDescription" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none" placeholder="选填，简单描述任务内容"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">品牌</label>
+                        <select id="taskCustomer" onchange="app.onCustomerChange()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                            <option value="">请选择</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">项目</label>
+                        <select id="taskProject" onchange="app.onProjectChange()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                            <option value="">请选择</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">环节</label>
+                    <select id="taskStage" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                        <option value="">请选择</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+                        <input type="date" id="taskStart" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
+                        <input type="date" id="taskEnd" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="taskArchived" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
+                        <span class="text-sm font-medium text-gray-700">标记为已归档</span>
+                    </label>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+                <button onclick="app.closeTaskModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                <button onclick="app.saveTaskModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+
+    <!-- 云端同步设置模态框 -->
+    <div id="syncModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl w-[520px] max-w-[90%]">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-800">云端同步设置</h3>
+                <button onclick="app.closeSyncModal()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="px-6 py-4 space-y-4">
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+                    <p class="font-medium mb-1">使用 GitHub Gist 私有 Gist 跨设备同步数据</p>
+                    <p class="text-xs text-blue-600">在 GitHub → Settings → Developer settings → Personal access tokens → Generate new token，勾选 <code class="bg-blue-100 px-1 rounded">gist</code> 权限即可。</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">GitHub Token</label>
+                    <input type="password" id="gistToken" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+                    <p class="text-xs text-gray-400 mt-1">保存在浏览器本地，仅用于调用 Gist API</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Gist ID（可选）</label>
+                    <input type="text" id="gistId" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="首次推送时留空，会自动创建并保存">
+                    <p class="text-xs text-gray-400 mt-1">在多设备之间保持同一个 Gist ID 即可共享数据</p>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+                <button onclick="app.closeSyncModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                <button onclick="app.saveSyncConfig()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">保存配置</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
