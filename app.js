@@ -575,8 +575,12 @@ class ProjectManager {
                         'Accept': 'application/vnd.github+json',
                         'Content-Type': 'application/json'
                     },
-7 行已隐藏
+                    body: JSON.stringify({
+                        files: { [GIST_FILENAME]: { content } }
+                    })
+                });
  
+            }
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 let msg = err.message || `HTTP ${res.status}`;
