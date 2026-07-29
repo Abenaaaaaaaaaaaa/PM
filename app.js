@@ -3,12 +3,12 @@
  * 四层嵌套：客户 -> 项目 -> 环节 -> 任务
  * 数据持久化：localStorage（本地）+ GitHub Gist（跨设备同步）
  */
-
+ 
 const STORAGE_KEY = 'projectManagerData';
 const GIST_TOKEN_KEY = 'pmGistToken';
 const GIST_ID_KEY = 'pmGistId';
 const GIST_FILENAME = 'project-manager-data.json';
-
+ 
 class ProjectManager {
     constructor() {
         this.view = 'table'; // 'table' | 'calendar' | 'archive'
@@ -22,7 +22,7 @@ class ProjectManager {
         this.sidebarCollapsed = false;
         this.sidebarWidth = 300;
         this.isResizing = false;
-
+ 
         // 颜色池，用于日历事件
         this.colors = [
             { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd' },
@@ -34,12 +34,12 @@ class ProjectManager {
             { bg: '#ffedd5', text: '#9a3412', border: '#fdba74' },
             { bg: '#f3e8ff', text: '#6b21a8', border: '#d8b4fe' },
         ];
-
+ 
         this.initData();
         this.init();
         this.initResize();
     }
-
+ 
     initData() {
         // 优先从 localStorage 加载本地数据
         const local = this.loadFromLocal();
@@ -48,11 +48,11 @@ class ProjectManager {
         } else {
             this.data = this.getDefaultData();
         }
-
+ 
         // 默认展开所有节点
         this.traverse(node => this.expandedNodes.add(node.id));
     }
-
+ 
     getDefaultData() {
         // 初始化示例数据
         return [
@@ -196,18 +196,18 @@ class ProjectManager {
             }
         ];
     }
-
+ 
     init() {
         this.renderTree();
         this.renderMain();
     }
-
+ 
     // ---------- 工具方法 ----------
-
+ 
     generateId() {
         return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     }
-
+ 
     traverse(callback) {
         const walk = nodes => {
             nodes.forEach(node => {
@@ -217,7 +217,7 @@ class ProjectManager {
         };
         walk(this.data);
     }
-
+ 
     findNode(id, nodes = this.data) {
         for (const node of nodes) {
             if (node.id === id) return node;
@@ -228,7 +228,7 @@ class ProjectManager {
         }
         return null;
     }
-
+ 
     findParent(id, nodes = this.data, parent = null) {
         for (const node of nodes) {
             if (node.id === id) return parent;
@@ -239,7 +239,7 @@ class ProjectManager {
         }
         return null;
     }
-
+ 
     deleteNode(id) {
         const parent = this.findParent(id);
         if (parent) {
@@ -249,7 +249,7 @@ class ProjectManager {
         }
         this.renderAll();
     }
-
+ 
     toggleTaskArchived(taskId) {
         const task = this.findNode(taskId);
         if (task && task.type === 'task') {
@@ -257,7 +257,7 @@ class ProjectManager {
             this.renderAll();
         }
     }
-
+ 
     getNodeColor(nodeId) {
         let hash = 0;
         for (let i = 0; i < nodeId.length; i++) {
@@ -265,19 +265,19 @@ class ProjectManager {
         }
         return this.colors[Math.abs(hash) % this.colors.length];
     }
-
+ 
     formatDate(dateStr) {
         if (!dateStr) return '-';
         const d = new Date(dateStr);
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }
-
+ 
     isSameDay(d1, d2) {
         return d1.getFullYear() === d2.getFullYear() &&
                d1.getMonth() === d2.getMonth() &&
                d1.getDate() === d2.getDate();
     }
-
+ 
     // 中国法定节假日（简化版）
     getHolidayName(d) {
         const y = d.getFullYear();
@@ -311,19 +311,19 @@ class ProjectManager {
         }
         return null;
     }
-
+ 
     isHoliday(d) {
         return this.getHolidayName(d) !== null;
     }
-
+ 
     parseDate(dateStr) {
         if (!dateStr) return null;
         const [y, m, d] = dateStr.split('-').map(Number);
         return new Date(y, m - 1, d);
     }
-
+ 
     // ---------- 视图切换 ----------
-
+ 
     setView(view) {
         this.view = view;
         document.getElementById('btnTable').className = view === 'table'
@@ -335,14 +335,14 @@ class ProjectManager {
         document.getElementById('btnArchive').className = view === 'archive'
             ? 'px-3 py-1.5 text-sm rounded-md transition-all bg-white shadow-sm text-gray-800 font-medium flex items-center gap-1.5'
             : 'px-3 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700 flex items-center gap-1.5';
-
+ 
         const calToggle = document.getElementById('calendarToggle');
         calToggle.classList.toggle('hidden', view !== 'calendar');
         calToggle.classList.toggle('flex', view === 'calendar');
-
+ 
         this.renderMain();
     }
-
+ 
     setCalendarType(type) {
         this.calendarType = type;
         document.getElementById('btnMonth').className = type === 'month'
@@ -353,28 +353,28 @@ class ProjectManager {
             : 'px-3 py-1.5 text-sm rounded-md transition-all text-gray-500 hover:text-gray-700';
         this.renderMain();
     }
-
+ 
     // ---------- 树形渲染 ----------
-
+ 
     renderTree() {
         const container = document.getElementById('treeContainer');
         container.innerHTML = this.buildTreeHtml(this.data);
     }
-
+ 
     buildTreeHtml(nodes, level = 0) {
         if (!nodes?.length) return '';
         return nodes.map(node => {
             const isExpanded = this.expandedNodes.has(node.id);
             const hasChildren = node.children?.length > 0;
             const isActive = this.selectedNodeId === node.id;
-
+ 
             const icons = {
                 customer: `<svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>`,
                 project: `<svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>`,
                 stage: `<svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>`,
                 task: `<svg class="w-4 h-4 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`,
             };
-
+ 
             const addActions = {
                 customer: `<button onclick="event.stopPropagation();app.showInputModal('新建项目', name => app.addChild('${node.id}', 'project', name))" class="tree-action-btn" title="添加项目"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>`,
                 project: `<button onclick="event.stopPropagation();app.showInputModal('新建环节', name => app.addChild('${node.id}', 'stage', name))" class="tree-action-btn" title="添加环节"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>` +
@@ -382,7 +382,7 @@ class ProjectManager {
                 stage: `<button onclick="event.stopPropagation();app.showInputModal('新建任务', name => app.addChild('${node.id}', 'task', name))" class="tree-action-btn" title="添加任务"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>`,
                 task: '',
             };
-
+ 
             return `
                 <div class="tree-item ${isActive ? 'active' : ''}" data-id="${node.id}">
                     <div class="tree-content" onclick="app.selectNode('${node.id}')">
@@ -409,7 +409,7 @@ class ProjectManager {
             `;
         }).join('');
     }
-
+ 
     toggleNode(id) {
         if (this.expandedNodes.has(id)) {
             this.expandedNodes.delete(id);
@@ -418,13 +418,13 @@ class ProjectManager {
         }
         this.renderTree();
     }
-
+ 
     selectNode(id) {
         this.selectedNodeId = id;
         this.renderTree();
         // 可选：根据选中节点筛选主视图
     }
-
+ 
     addCustomer() {
         this.showInputModal('新建客户', name => {
             this.data.push({
@@ -436,18 +436,18 @@ class ProjectManager {
             this.renderAll();
         });
     }
-
+ 
     addChild(parentId, type, name) {
         const parent = this.findNode(parentId);
         if (!parent) return;
-
+ 
         const newNode = {
             id: this.generateId(),
             type,
             name,
             children: type === 'task' ? undefined : []
         };
-
+ 
         if (type === 'project') {
             newNode.startDate = '';
             newNode.endDate = '';
@@ -457,15 +457,15 @@ class ProjectManager {
             newNode.endDate = '';
             newNode.archived = false;
         }
-
+ 
         parent.children = parent.children || [];
         parent.children.push(newNode);
         this.expandedNodes.add(parentId);
         this.renderAll();
     }
-
+ 
     // ---------- 主视图渲染 ----------
-
+ 
     renderMain() {
         const container = document.getElementById('mainContent');
         if (this.view === 'table') {
@@ -478,15 +478,15 @@ class ProjectManager {
             this.initCalendarInteractions();
         }
     }
-
+ 
     renderAll() {
         this.saveToLocal();
         this.renderTree();
         this.renderMain();
     }
-
+ 
     // ---------- 数据持久化 ----------
-
+ 
     loadFromLocal() {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
@@ -499,7 +499,7 @@ class ProjectManager {
             return null;
         }
     }
-
+ 
     saveToLocal() {
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
@@ -507,21 +507,21 @@ class ProjectManager {
             console.error('保存本地数据失败：', e);
         }
     }
-
+ 
     getGistConfig() {
         return {
             token: localStorage.getItem(GIST_TOKEN_KEY) || '',
             id: localStorage.getItem(GIST_ID_KEY) || ''
         };
     }
-
+ 
     saveGistConfig(token, id) {
         if (token) localStorage.setItem(GIST_TOKEN_KEY, token);
         else localStorage.removeItem(GIST_TOKEN_KEY);
         if (id) localStorage.setItem(GIST_ID_KEY, id);
         else localStorage.removeItem(GIST_ID_KEY);
     }
-
+ 
     async syncToGist() {
         const { token, id } = this.getGistConfig();
         if (!token) {
@@ -529,20 +529,28 @@ class ProjectManager {
             this.openSyncModal();
             return;
         }
-
+ 
+        const cleanToken = token.trim();
+        if (!cleanToken) {
+            alert('Token 不能为空（注意：粘贴时不要带入空格或换行）');
+            return;
+        }
+ 
         const content = JSON.stringify({
             updatedAt: new Date().toISOString(),
             data: this.data
         }, null, 2);
-
+ 
         try {
             let res;
-            if (id) {
-                // 更新现有 Gist
-                res = await fetch(`https://api.github.com/gists/${id}`, {
+            let effectiveId = id;
+ 
+            if (effectiveId) {
+                // 尝试更新现有 Gist
+                res = await fetch(`https://api.github.com/gists/${effectiveId}`, {
                     method: 'PATCH',
                     headers: {
-                        'Authorization': `Bearer ${token}`,
+                        'Authorization': `Bearer ${cleanToken}`,
                         'Accept': 'application/vnd.github+json',
                         'Content-Type': 'application/json'
                     },
@@ -550,32 +558,36 @@ class ProjectManager {
                         files: { [GIST_FILENAME]: { content } }
                     })
                 });
-            } else {
+ 
+                // 如果 Gist ID 失效或不存在，降级为创建新 Gist
+                if (res.status === 404) {
+                    console.warn('Gist ID 不存在，将自动创建新 Gist...');
+                    effectiveId = null;
+                }
+            }
+ 
+            if (!effectiveId) {
                 // 创建新 Gist
                 res = await fetch('https://api.github.com/gists', {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`,
+                        'Authorization': `Bearer ${cleanToken}`,
                         'Accept': 'application/vnd.github+json',
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        description: '项目管理系统数据',
-                        public: false,
-                        files: { [GIST_FILENAME]: { content } }
-                    })
-                });
-            }
-
+7 行已隐藏
+ 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                throw new Error(err.message || `HTTP ${res.status}`);
+                let msg = err.message || `HTTP ${res.status}`;
+                if (res.status === 401 || res.status === 403) {
+                    msg += '。可能是 Token 无效、过期或权限不足（需 gist 权限）';
+                }
+                throw new Error(msg);
             }
-
+ 
             const gist = await res.json();
-            if (!id) {
-                this.saveGistConfig(token, gist.id);
-            }
+            this.saveGistConfig(cleanToken, gist.id);
             this.updateSyncStatus(`同步成功 · ${new Date().toLocaleTimeString()}`);
             return gist;
         } catch (e) {
@@ -583,7 +595,7 @@ class ProjectManager {
             console.error(e);
         }
     }
-
+ 
     async loadFromGist(silent = false) {
         const { token, id } = this.getGistConfig();
         if (!token || !id) {
@@ -593,7 +605,7 @@ class ProjectManager {
             }
             return null;
         }
-
+ 
         try {
             const res = await fetch(`https://api.github.com/gists/${id}`, {
                 headers: {
@@ -601,30 +613,30 @@ class ProjectManager {
                     'Accept': 'application/vnd.github+json'
                 }
             });
-
+ 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.message || `HTTP ${res.status}`);
             }
-
+ 
             const gist = await res.json();
             const file = gist.files[GIST_FILENAME];
             if (!file) {
                 if (!silent) alert('未在该 Gist 中找到数据文件');
                 return null;
             }
-
+ 
             const parsed = JSON.parse(file.content);
             if (!parsed.data || !Array.isArray(parsed.data)) {
                 if (!silent) alert('Gist 数据格式错误');
                 return null;
             }
-
+ 
             if (!silent) {
                 const confirmMsg = `检测到云端数据（更新时间：${parsed.updatedAt ? new Date(parsed.updatedAt).toLocaleString() : '未知'}）。\n\n是否覆盖本地数据？\n\n点"确定"使用云端数据，点"取消"保留本地数据。`;
                 if (!confirm(confirmMsg)) return null;
             }
-
+ 
             this.data = parsed.data;
             this.saveToLocal();
             this.renderAll();
@@ -638,12 +650,12 @@ class ProjectManager {
             return null;
         }
     }
-
+ 
     updateSyncStatus(text) {
         const el = document.getElementById('syncStatus');
         if (el) el.textContent = text;
     }
-
+ 
     openSyncModal() {
         const { token, id } = this.getGistConfig();
         document.getElementById('gistToken').value = token;
@@ -651,12 +663,12 @@ class ProjectManager {
         document.getElementById('syncModal').classList.remove('hidden');
         document.getElementById('syncModal').classList.add('flex');
     }
-
+ 
     closeSyncModal() {
         document.getElementById('syncModal').classList.add('hidden');
         document.getElementById('syncModal').classList.remove('flex');
     }
-
+ 
     saveSyncConfig() {
         const token = document.getElementById('gistToken').value.trim();
         const id = document.getElementById('gistId').value.trim();
@@ -664,9 +676,9 @@ class ProjectManager {
         this.closeSyncModal();
         this.updateSyncStatus(id ? '已配置 · ' + new Date().toLocaleTimeString() : '配置已清除');
     }
-
+ 
     // ---------- 表格视图 ----------
-
+ 
     renderTableView() {
         const rows = [];
         const walk = (nodes, path = []) => {
@@ -699,7 +711,7 @@ class ProjectManager {
             });
         };
         walk(this.data);
-
+ 
         // 计算合并的 rowspan
         let customerRowspan = {};
         let projectRowspan = {};
@@ -710,14 +722,14 @@ class ProjectManager {
             let cEnd = i;
             while (cEnd < rows.length && rows[cEnd].customerId === cId) cEnd++;
             customerRowspan[i] = cEnd - i;
-
+ 
             let j = i;
             while (j < cEnd) {
                 const pId = rows[j].projectId;
                 let pEnd = j;
                 while (pEnd < cEnd && rows[pEnd].projectId === pId) pEnd++;
                 projectRowspan[j] = pEnd - j;
-
+ 
                 let k = j;
                 while (k < pEnd) {
                     const sId = rows[k].stageId;
@@ -730,7 +742,7 @@ class ProjectManager {
             }
             i = cEnd;
         }
-
+ 
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
@@ -791,13 +803,13 @@ class ProjectManager {
                                         ` : '-'}
                                     </td>`;
                                 }
-
+ 
                                 const statusCell = `<td class="align-middle">
                                     <button onclick="app.toggleTaskArchived('${row.taskId}')" class="task-status-badge ${row.archived ? 'archived' : 'active'}">
                                         ${row.archived ? '已归档' : '进行中'}
                                     </button>
                                 </td>`;
-
+ 
                                 return `
                                     <tr>
                                         ${customerCell}
@@ -818,16 +830,16 @@ class ProjectManager {
             </div>
         `;
     }
-
+ 
     // ---------- 日历视图（传统网格 + 跨天横条）----------
-
+ 
     renderCalendarView() {
         if (this.calendarType === 'month') {
             return this.renderMonthCalendar();
         }
         return this.renderWeekCalendar();
     }
-
+ 
     // 获取周一为起始的日期数组
     getMonthDates() {
         const year = this.currentDate.getFullYear();
@@ -837,10 +849,10 @@ class ProjectManager {
         // 转为周一起始：(day + 6) % 7  结果: 0=周一, 1=周二, ... 6=周日
         const dayOfWeekMonFirst = (firstDay.getDay() + 6) % 7;
         const startPadding = dayOfWeekMonFirst;
-
+ 
         const prevLastDay = new Date(year, month, 0).getDate();
         const lastDay = new Date(year, month + 1, 0).getDate();
-
+ 
         const dates = [];
         for (let i = startPadding - 1; i >= 0; i--) {
             dates.push(new Date(year, month - 1, prevLastDay - i));
@@ -854,7 +866,7 @@ class ProjectManager {
         }
         return dates;
     }
-
+ 
     getWeekDates() {
         const year = this.currentDate.getFullYear();
         const month = this.currentDate.getMonth();
@@ -871,7 +883,7 @@ class ProjectManager {
         }
         return dates;
     }
-
+ 
     // 收集任务数据
     collectTasks() {
         const tasks = [];
@@ -902,7 +914,7 @@ class ProjectManager {
         walk(this.data);
         return tasks;
     }
-
+ 
     // 获取所有项目列表（用于过滤Tab）
     getProjectsList() {
         const projects = [];
@@ -917,7 +929,7 @@ class ProjectManager {
         walk(this.data);
         return projects;
     }
-
+ 
     // 任务泳道布局（避免重叠）
     layoutTaskLanes(weekTasks, weekStartMidnight) {
         // 过滤在当前周内的任务
@@ -928,18 +940,18 @@ class ProjectManager {
             const endOffset = Math.min(6, Math.round((taskEnd - weekStartMidnight) / 86400000));
             return { ...t, startOffset, endOffset };
         }).filter(t => t.endOffset >= 0 && t.startOffset <= 6);
-
+ 
         // 排序：开始早的在前，时长长的在前
         tasks.sort((a, b) => {
             if (a.startOffset !== b.startOffset) return a.startOffset - b.startOffset;
             return (b.endOffset - b.startOffset) - (a.endOffset - a.startOffset);
         });
-
+ 
         // 贪心分配泳道
         const lanes = []; // 每条泳道记录最后任务的 endOffset
         const BAR_HEIGHT = 42;
         const BAR_GAP = 4;
-
+ 
         for (const t of tasks) {
             let laneIdx = lanes.findIndex(end => end < t.startOffset);
             if (laneIdx === -1) {
@@ -950,15 +962,15 @@ class ProjectManager {
             }
             t.lane = laneIdx;
         }
-
+ 
         return { tasks, laneCount: lanes.length, BAR_HEIGHT, BAR_GAP };
     }
-
+ 
     setProjectFilter(projectId) {
         this.selectedProjectId = projectId;
         this.renderAll();
     }
-
+ 
     renderMonthCalendar() {
         const year = this.currentDate.getFullYear();
         const month = this.currentDate.getMonth();
@@ -967,27 +979,27 @@ class ProjectManager {
         for (let i = 0; i < 6; i++) {
             weeks.push(dates.slice(i * 7, i * 7 + 7));
         }
-
+ 
         const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
         const today = new Date();
         const allTasks = this.collectTasks();
         const projects = this.getProjectsList();
-
+ 
         // 项目筛选 Tab
         const filterTabs = `<div class="project-filter-tabs">
             <div class="project-filter-tab ${this.selectedProjectId === 'all' ? 'active' : ''}" onclick="app.setProjectFilter('all')">全部项目</div>
             ${projects.map(p => `<div class="project-filter-tab ${this.selectedProjectId === p.id ? 'active' : ''}" onclick="app.setProjectFilter('${p.id}')">${p.name}</div>`).join('')}
         </div>`;
-
+ 
         const header = weekDayNames.map(d =>
             `<div class="calendar-header-cell">${d}</div>`
         ).join('');
-
+ 
         const rows = weeks.map((week) => {
             const weekStart = week[0];
             const weekStartMidnight = new Date(weekStart);
             weekStartMidnight.setHours(0, 0, 0, 0);
-
+ 
             const weekTasks = allTasks.filter(t => {
                 const tStart = this.parseDate(t.task.startDate);
                 const tEnd = this.parseDate(t.task.endDate || t.task.startDate);
@@ -995,10 +1007,10 @@ class ProjectManager {
                 weekEnd.setHours(23, 59, 59, 999);
                 return tStart <= weekEnd && tEnd >= weekStartMidnight;
             });
-
+ 
             const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
             const weekHeight = Math.max(110, 40 + laneCount * (BAR_HEIGHT + BAR_GAP));
-
+ 
             const dayCells = week.map((d) => {
                 const isToday = this.isSameDay(d, today);
                 const isOtherMonth = d.getMonth() !== month;
@@ -1013,14 +1025,14 @@ class ProjectManager {
                     </div>
                 </div>`;
             }).join('');
-
+ 
             const taskBars = layoutTasks.map(t => {
                 const left = (t.startOffset / 7) * 100;
                 const width = ((t.endOffset - t.startOffset + 1) / 7) * 100;
                 const top = t.lane * (BAR_HEIGHT + BAR_GAP);
                 const c = t.stageColor;
                 const isArchived = t.task.archived;
-
+ 
                 return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''}" data-event-id="${t.task.id}"
                     style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                     <div class="bar-title">${t.task.name}</div>
@@ -1028,7 +1040,7 @@ class ProjectManager {
                     <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
                 </div>`;
             }).join('');
-
+ 
             return `
                 <div class="calendar-week-row" style="min-height:${weekHeight}px">
                     ${dayCells}
@@ -1038,7 +1050,7 @@ class ProjectManager {
                 </div>
             `;
         }).join('');
-
+ 
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <div class="calendar-nav">
@@ -1064,17 +1076,17 @@ class ProjectManager {
             </div>
         `;
     }
-
+ 
     renderWeekCalendar() {
         const dates = this.getWeekDates();
         const today = new Date();
         const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
         const allTasks = this.collectTasks();
         const projects = this.getProjectsList();
-
+ 
         const weekStartMidnight = new Date(dates[0]);
         weekStartMidnight.setHours(0, 0, 0, 0);
-
+ 
         const weekTasks = allTasks.filter(t => {
             const tStart = this.parseDate(t.task.startDate);
             const tEnd = this.parseDate(t.task.endDate || t.task.startDate);
@@ -1082,15 +1094,15 @@ class ProjectManager {
             weekEnd.setHours(23, 59, 59, 999);
             return tStart <= weekEnd && tEnd >= weekStartMidnight;
         });
-
+ 
         const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
         const weekHeight = Math.max(220, 40 + laneCount * (BAR_HEIGHT + BAR_GAP));
-
+ 
         const filterTabs = `<div class="project-filter-tabs">
             <div class="project-filter-tab ${this.selectedProjectId === 'all' ? 'active' : ''}" onclick="app.setProjectFilter('all')">全部项目</div>
             ${projects.map(p => `<div class="project-filter-tab ${this.selectedProjectId === p.id ? 'active' : ''}" onclick="app.setProjectFilter('${p.id}')">${p.name}</div>`).join('')}
         </div>`;
-
+ 
         const header = weekDayNames.map((d, i) => {
             const isToday = this.isSameDay(dates[i], today);
             const dateNum = dates[i].getDate();
@@ -1099,7 +1111,7 @@ class ProjectManager {
                 ${d}<br><span class="text-xs">${dates[i].getMonth() + 1}/${dateNum}</span>
             </div>`;
         }).join('');
-
+ 
         const dayCells = dates.map((d) => {
             const isToday = this.isSameDay(d, today);
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
@@ -1109,14 +1121,14 @@ class ProjectManager {
                 ${isHoliday ? `<div class="calendar-holiday-tag" style="margin-top:2px">${holidayName}</div>` : ''}
             </div>`;
         }).join('');
-
+ 
         const taskBars = layoutTasks.map(t => {
             const left = (t.startOffset / 7) * 100;
             const width = ((t.endOffset - t.startOffset + 1) / 7) * 100;
             const top = t.lane * (BAR_HEIGHT + BAR_GAP);
             const c = t.stageColor;
             const isArchived = t.task.archived;
-
+ 
             return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''}" data-event-id="${t.task.id}"
                 style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                 <div class="bar-title">${t.task.name}</div>
@@ -1124,9 +1136,9 @@ class ProjectManager {
                 <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
             </div>`;
         }).join('');
-
+ 
         const title = `${dates[0].getFullYear()}年 ${dates[0].getMonth() + 1}月${dates[0].getDate()}日 - ${dates[6].getMonth() + 1}月${dates[6].getDate()}日`;
-
+ 
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <div class="calendar-nav">
@@ -1157,7 +1169,7 @@ class ProjectManager {
             </div>
         `;
     }
-
+ 
     renderArchiveView() {
         const archivedTasks = [];
         const walk = (nodes, path = []) => {
@@ -1184,7 +1196,7 @@ class ProjectManager {
             });
         };
         walk(this.data);
-
+ 
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center mb-4">
@@ -1238,42 +1250,42 @@ class ProjectManager {
             </div>
         `;
     }
-
+ 
     addNewTask() {
         const today = new Date();
         const startDate = this.formatDateISO(today);
         this.openTaskModal(startDate, startDate);
     }
-
+ 
     // ---------- 日历导航 ----------
-
+ 
     prevMonth() {
         this.currentDate.setMonth(this.currentDate.getMonth() - 1);
         this.renderMain();
     }
-
+ 
     nextMonth() {
         this.currentDate.setMonth(this.currentDate.getMonth() + 1);
         this.renderMain();
     }
-
+ 
     prevWeek() {
         this.currentDate.setDate(this.currentDate.getDate() - 7);
         this.renderMain();
     }
-
+ 
     nextWeek() {
         this.currentDate.setDate(this.currentDate.getDate() + 7);
         this.renderMain();
     }
-
+ 
     goToday() {
         this.currentDate = new Date();
         this.renderMain();
     }
-
+ 
     // ---------- 模态框 ----------
-
+ 
     editProject(id) {
         const node = this.findNode(id);
         if (!node || node.type !== 'project') return;
@@ -1286,13 +1298,13 @@ class ProjectManager {
         document.getElementById('projectModal').classList.remove('hidden');
         document.getElementById('projectModal').classList.add('flex');
     }
-
+ 
     closeModal() {
         document.getElementById('projectModal').classList.add('hidden');
         document.getElementById('projectModal').classList.remove('flex');
         this.editingProject = null;
     }
-
+ 
     saveProject() {
         if (!this.editingProject) return;
         this.editingProject.name = document.getElementById('projectName').value;
@@ -1302,7 +1314,7 @@ class ProjectManager {
         this.closeModal();
         this.renderAll();
     }
-
+ 
     showInputModal(title, callback) {
         this.inputModalCallback = callback;
         document.getElementById('inputModalTitle').textContent = title;
@@ -1311,13 +1323,13 @@ class ProjectManager {
         document.getElementById('inputModal').classList.add('flex');
         setTimeout(() => document.getElementById('inputModalField').focus(), 100);
     }
-
+ 
     closeInputModal() {
         document.getElementById('inputModal').classList.add('hidden');
         document.getElementById('inputModal').classList.remove('flex');
         this.inputModalCallback = null;
     }
-
+ 
     saveInputModal() {
         const value = document.getElementById('inputModalField').value.trim();
         if (value && this.inputModalCallback) {
@@ -1325,15 +1337,15 @@ class ProjectManager {
         }
         this.closeInputModal();
     }
-
+ 
     // ---------- 侧栏折叠/展开 ----------
-
+ 
     toggleSidebar() {
         this.sidebarCollapsed = !this.sidebarCollapsed;
         const sidebar = document.getElementById('sidebar');
         const handle = document.getElementById('resizeHandle');
         const expandBtn = document.getElementById('sidebarExpandBtn');
-
+ 
         if (this.sidebarCollapsed) {
             sidebar.classList.add('collapsed');
             handle.classList.add('collapsed');
@@ -1345,34 +1357,34 @@ class ProjectManager {
             expandBtn.classList.add('hidden');
         }
     }
-
+ 
     // ---------- 侧栏拖拽调节宽度 ----------
-
+ 
     initResize() {
         const handle = document.getElementById('resizeHandle');
         const sidebar = document.getElementById('sidebar');
-
+ 
         const onMouseDown = (e) => {
             this.isResizing = true;
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
             e.preventDefault();
         };
-
+ 
         const onMouseMove = (e) => {
             if (!this.isResizing) return;
             const newWidth = Math.max(180, Math.min(600, e.clientX));
             this.sidebarWidth = newWidth;
             sidebar.style.width = newWidth + 'px';
         };
-
+ 
         const onMouseUp = () => {
             if (!this.isResizing) return;
             this.isResizing = false;
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
         };
-
+ 
         handle.addEventListener('mousedown', onMouseDown);
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
@@ -1380,13 +1392,13 @@ class ProjectManager {
         this.initTableInteractions();
         this.initCalendarInteractions();
     }
-
+ 
     // ---------- 表格交互（列宽拖拽、单元格编辑）----------
-
+ 
     initTableInteractions() {
         const table = document.getElementById('dataTable');
         if (!table) return;
-
+ 
         // 列宽拖拽
         const resizers = table.querySelectorAll('.col-resizer');
         resizers.forEach(resizer => {
@@ -1401,7 +1413,7 @@ class ProjectManager {
                 document.body.style.userSelect = 'none';
                 e.preventDefault();
                 e.stopPropagation();
-
+ 
                 const onMove = (ev) => {
                     const diff = ev.clientX - startX;
                     const newWidth = Math.max(50, startWidth + diff);
@@ -1417,23 +1429,23 @@ class ProjectManager {
                 document.addEventListener('mouseup', onUp);
             });
         });
-
+ 
         // 单元格编辑
         const editableCells = table.querySelectorAll('.editable-cell');
         editableCells.forEach(cell => {
             cell.addEventListener('click', (e) => {
                 if (cell.classList.contains('editing')) return;
                 e.stopPropagation();
-
+ 
                 const type = cell.dataset.type;
                 const id = cell.dataset.id;
                 const field = cell.dataset.field;
                 const node = this.findNode(id);
                 if (!node) return;
-
+ 
                 cell.classList.add('editing');
                 const originalText = cell.textContent.trim();
-
+ 
                 let input;
                 if (type === 'textarea') {
                     input = document.createElement('textarea');
@@ -1448,12 +1460,12 @@ class ProjectManager {
                     input.type = 'text';
                     input.value = originalText === '-' ? '' : originalText;
                 }
-
+ 
                 cell.textContent = '';
                 cell.appendChild(input);
                 input.focus();
                 if (input.select) input.select();
-
+ 
                 const commit = () => {
                     const newVal = input.value.trim();
                     if (type === 'date') {
@@ -1463,7 +1475,7 @@ class ProjectManager {
                     }
                     this.renderAll();
                 };
-
+ 
                 input.addEventListener('blur', commit);
                 input.addEventListener('keydown', (ev) => {
                     if (ev.key === 'Enter' && type !== 'textarea') {
@@ -1477,14 +1489,14 @@ class ProjectManager {
             });
         });
     }
-
+ 
     // ---------- 日历交互（传统网格拖拽）----------
-
+ 
     initCalendarInteractions() {
         const gridId = this.calendarType === 'month' ? 'calendarGrid' : 'weekGrid';
         const grid = document.getElementById(gridId);
         if (!grid) return;
-
+ 
         // 绑定任务条拖拽和点击
         grid.querySelectorAll('.day-bar-item').forEach(bar => {
             bar.onmousedown = (e) => {
@@ -1493,7 +1505,7 @@ class ProjectManager {
                 const resizeHandle = e.target.closest('.bar-resize-handle');
                 const node = this.findNode(eventId);
                 if (!node) return;
-
+ 
                 if (resizeHandle) {
                     this._resizingEvent = { id: eventId, startX: e.clientX, origEndDate: node.endDate || node.startDate };
                     document.body.classList.add('dragging-resize');
@@ -1512,14 +1524,14 @@ class ProjectManager {
                 }
             };
         });
-
+ 
         // document 级监听只绑定一次
         if (!this._calendarDocListenersAdded) {
             this._calendarDocListenersAdded = true;
-
+ 
             document.addEventListener('mousemove', (e) => {
                 if (!this._movingEvent && !this._resizingEvent) return;
-
+ 
                 const container = this.calendarType === 'month'
                     ? e.target.closest('.calendar-week-row')
                     : e.target.closest('.week-content-grid');
@@ -1527,12 +1539,12 @@ class ProjectManager {
                     this.hideDragColHighlight();
                     return;
                 }
-
+ 
                 const rect = container.getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
                 const colLeft = (dayIdx / 7) * 100;
-
+ 
                 let baseDate;
                 if (this.calendarType === 'month') {
                     const weekRows = document.querySelectorAll('.calendar-week-row');
@@ -1545,10 +1557,10 @@ class ProjectManager {
                     baseDate = this.getWeekDates()[0];
                 }
                 if (!baseDate) return;
-
+ 
                 const newDate = new Date(baseDate);
                 newDate.setDate(baseDate.getDate() + dayIdx);
-
+ 
                 if (this._movingEvent) {
                     const node = this.findNode(this._movingEvent.id);
                     if (node && node.startDate) {
@@ -1577,7 +1589,7 @@ class ProjectManager {
                     }
                 }
             });
-
+ 
             document.addEventListener('mouseup', () => {
                 document.body.classList.remove('dragging-move', 'dragging-resize');
                 this.hideDragColHighlight();
@@ -1590,7 +1602,7 @@ class ProjectManager {
             });
         }
     }
-
+ 
     showDragColHighlight(container, left, width) {
         let el = document.getElementById('dragColHighlight');
         if (!el) {
@@ -1603,7 +1615,7 @@ class ProjectManager {
         el.style.width = width + '%';
         el.style.display = 'block';
     }
-
+ 
     showDragColLine(container, left) {
         let el = document.getElementById('dragColHighlight');
         if (!el) {
@@ -1616,29 +1628,29 @@ class ProjectManager {
         el.style.width = '2px';
         el.style.display = 'block';
     }
-
+ 
     hideDragColHighlight() {
         const el = document.getElementById('dragColHighlight');
         if (el) el.style.display = 'none';
     }
-
+ 
     // ---------- 环节颜色选择器 ----------
-
+ 
     openColorPicker(stageName, event) {
         event.stopPropagation();
         // 关闭已有的
         this.closeColorPicker();
-
+ 
         const colorPool = [
             '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444',
             '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
             '#14b8a6', '#a855f7', '#eab308', '#475569', '#0891b2'
         ];
-
+ 
         const picker = document.createElement('div');
         picker.className = 'stage-color-picker';
         picker.id = 'colorPicker';
-
+ 
         // 获取当前颜色
         let currentColor = null;
         this.traverse(node => {
@@ -1646,7 +1658,7 @@ class ProjectManager {
                 currentColor = node.color;
             }
         });
-
+ 
         colorPool.forEach(c => {
             const opt = document.createElement('div');
             opt.className = 'stage-color-option' + (c === currentColor ? ' selected' : '');
@@ -1658,18 +1670,18 @@ class ProjectManager {
             };
             picker.appendChild(opt);
         });
-
+ 
         document.body.appendChild(picker);
         const rect = event.target.getBoundingClientRect();
         picker.style.left = rect.left + 'px';
         picker.style.top = (rect.bottom + 4) + 'px';
-
+ 
         // 点击外部关闭
         setTimeout(() => {
             document.addEventListener('click', this._colorPickerCloseHandler = () => this.closeColorPicker());
         }, 0);
     }
-
+ 
     closeColorPicker() {
         const picker = document.getElementById('colorPicker');
         if (picker) picker.remove();
@@ -1678,7 +1690,7 @@ class ProjectManager {
             this._colorPickerCloseHandler = null;
         }
     }
-
+ 
     setStageColor(stageName, color) {
         // 更新所有同名环节的颜色
         this.traverse(node => {
@@ -1688,30 +1700,30 @@ class ProjectManager {
         });
         this.renderAll();
     }
-
+ 
     formatDateISO(d) {
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }
-
+ 
     // ---------- 任务模态框 ----------
-
+ 
     openTaskModal(startDate, endDate, taskId = null) {
         this._taskModalData = {
             taskId,
             startDate,
             endDate
         };
-
+ 
         document.getElementById('taskName').value = '';
         document.getElementById('taskDescription').value = '';
         document.getElementById('taskStart').value = startDate;
         document.getElementById('taskEnd').value = endDate;
         document.getElementById('taskArchived').checked = false;
-
+ 
         this.populateCustomerOptions();
         document.getElementById('taskProject').innerHTML = '<option value="">请选择</option>';
         document.getElementById('taskStage').innerHTML = '<option value="">请选择</option>';
-
+ 
         if (taskId) {
             const node = this.findNode(taskId);
             if (node) {
@@ -1751,18 +1763,18 @@ class ProjectManager {
                 }
             }
         }
-
+ 
         document.getElementById('taskModal').classList.remove('hidden');
         document.getElementById('taskModal').classList.add('flex');
         setTimeout(() => document.getElementById('taskName').focus(), 100);
     }
-
+ 
     closeTaskModal() {
         document.getElementById('taskModal').classList.add('hidden');
         document.getElementById('taskModal').classList.remove('flex');
         this._taskModalData = null;
     }
-
+ 
     saveTaskModal() {
         const name = document.getElementById('taskName').value.trim();
         const description = document.getElementById('taskDescription').value.trim();
@@ -1772,12 +1784,12 @@ class ProjectManager {
         const startDate = document.getElementById('taskStart').value;
         const endDate = document.getElementById('taskEnd').value;
         const archived = document.getElementById('taskArchived').checked;
-
+ 
         if (!name) { alert('请输入任务名称'); return; }
         if (!customerId) { alert('请选择品牌'); return; }
         if (!projectId) { alert('请选择项目'); return; }
         if (!stageId) { alert('请选择环节'); return; }
-
+ 
         if (this._taskModalData.taskId) {
             // 编辑现有任务
             const task = this.findNode(this._taskModalData.taskId);
@@ -1787,7 +1799,7 @@ class ProjectManager {
                 task.startDate = startDate;
                 task.endDate = endDate;
                 task.archived = archived;
-
+ 
                 // 如果关联的环节改变了，需要移动节点
                 const oldStage = this.findParent(task.id);
                 if (oldStage && oldStage.id !== stageId) {
@@ -1819,11 +1831,11 @@ class ProjectManager {
                 stage.children.push(newTask);
             }
         }
-
+ 
         this.closeTaskModal();
         this.renderAll();
     }
-
+ 
     populateCustomerOptions() {
         const select = document.getElementById('taskCustomer');
         select.innerHTML = '<option value="">请选择</option>';
@@ -1834,7 +1846,7 @@ class ProjectManager {
             select.appendChild(opt);
         });
     }
-
+ 
     onCustomerChange() {
         const customerId = document.getElementById('taskCustomer').value;
         const select = document.getElementById('taskProject');
@@ -1852,7 +1864,7 @@ class ProjectManager {
         }
         document.getElementById('taskStage').innerHTML = '<option value="">请选择</option>';
     }
-
+ 
     onProjectChange() {
         const projectId = document.getElementById('taskProject').value;
         const select = document.getElementById('taskStage');
@@ -1870,10 +1882,10 @@ class ProjectManager {
         }
     }
 }
-
+ 
 // 全局实例
 const app = new ProjectManager();
-
+ 
 // 键盘事件
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
