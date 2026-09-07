@@ -449,6 +449,46 @@ class ProjectManager {
         return parts.length ? parts.join('<span class="phase-sep">·</span>') : '';
     }
 
+    // 计算阶段在任务条内的定位（百分比 left/width），相对任务条本身
+    // taskStart/taskEnd: 任务起止 Date，segStartOffset/segEndOffset: 当前段在周内的偏移
+    _phaseBarPositions(task, taskStart, taskEnd, segStartOffset, segEndOffset) {
+        if (!task || !Array.isArray(task.phases) || task.phases.length === 0) return [];
+        const segStartMs = new Date(taskStart.getTime());
+        segStartMs.setDate(segStartMs.getDate() + (segStartOffset));
+        const segEndMs = new Date(taskEnd.getTime());
+        // 段的覆盖范围（天数），用作分母计算百分比
+        const segSpan = segEndOffset - segStartOffset + 1; // ≥1
+        const segLeftMs = new Date(taskStart.getTime());
+        segLeftMs.setDate(segLeftMs.getDate() + segStartOffset);
+        const segRightMs = new Date(taskStart.getTime());
+        segRightMs.setDate(segRightMs.getDate() + segEndOffset);
+        const segLeftDay = Math.round((segLeftMs - taskStart) / 86400000);
+        const positions = [];
+        task.phases.forEach(ph => {
+            if (!ph.name) return;
+            const pStart = ph.startDate ? this.parseDate(ph.startDate) : null;
+            const pEnd = ph.endDate ? this.parseDate(ph.endDate) : (pStart || null);
+            if (!pStart) {
+                // 无日期：平均分布
+                positions.push({ phase: ph, left: 0, width: 100 });
+                return;
+            }
+            let ps = pStart, pe = pEnd || pStart;
+            // 与段范围求交集
+            const iStart = ps < segLeftMs ? segLeftMs : ps;
+            const iEnd = pe > segRightMs ? segRightMs : pe;
+            if (iStart > segRightMs || iEnd < segLeftMs) return; // 阶段不在此段内
+            const relLeft = Math.round((iStart - segLeftMs) / 86400000);
+            const relWidth = Math.max(1, Math.round((iEnd - iStart) / 86400000) + 1);
+            positions.push({
+                phase: ph,
+                left: (relLeft / segSpan) * 100,
+                width: (relWidth / segSpan) * 100
+            });
+        });
+        return positions;
+    }
+
     // 短日期格式 MM/DD
     _shortDate(dateStr) {
         if (!dateStr) return '';
@@ -1394,7 +1434,7 @@ class ProjectManager {
                 const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
                 const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
                 const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
-                const phasesLine = this._renderPhasesLine(t.task);
+                const hasPhases = !!(t.task.phases && t.task.phases.some(p => p.name));
 
                 // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
                 const segments = t.task.workdaysOnly
@@ -1406,16 +1446,23 @@ class ProjectManager {
                 return segments.map(seg => {
                     const left = (seg.startOffset / 7) * 100;
                     const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
-                    return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${phasesLine ? 'has-phases' : ''}" data-event-id="${t.task.id}"
+                    // 计算阶段迷你条在该段内的位置（相对任务条百分比）
+                    const phasePositions = hasPhases
+                        ? this._phaseBarPositions(t.task, taskStart, taskEnd, seg.startOffset, seg.endOffset)
+                        : [];
+                    const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
+                        return `<div class="phase-mini-bar" style="left:${p.left}%;width:${p.width}%;background:${isArchived ? '#cbd5e1' : c};color:${isArchived ? '#64748b' : '#fff'}" title="${p.phase.name}">${p.phase.name}</div>`;
+                    }).join('')}</div>` : '';
+                    return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
                         style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                         <div class="bar-title">${nameWithDays}</div>
-                        ${phasesLine ? `<div class="bar-phases">${phasesLine}</div>` : ''}
+                        ${phaseBarsHtml}
                         <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
                         <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
                     </div>`;
                 }).join('');
             }).join('');
- 
+
             return `
                 <div class="calendar-week-row" style="min-height:${weekHeight}px">
                     ${dayCells}
@@ -1509,7 +1556,7 @@ class ProjectManager {
             const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
             const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
             const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
-            const phasesLine = this._renderPhasesLine(t.task);
+            const hasPhases = !!(t.task.phases && t.task.phases.some(p => p.name));
 
             // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
             const segments = t.task.workdaysOnly
@@ -1521,16 +1568,23 @@ class ProjectManager {
             return segments.map(seg => {
                 const left = (seg.startOffset / 7) * 100;
                 const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
-                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${phasesLine ? 'has-phases' : ''}" data-event-id="${t.task.id}"
+                // 计算阶段迷你条在该段内的位置（相对任务条百分比）
+                const phasePositions = hasPhases
+                    ? this._phaseBarPositions(t.task, taskStart, taskEnd, seg.startOffset, seg.endOffset)
+                    : [];
+                const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
+                    return `<div class="phase-mini-bar" style="left:${p.left}%;width:${p.width}%;background:${isArchived ? '#cbd5e1' : c};color:${isArchived ? '#64748b' : '#fff'}" title="${p.phase.name}">${p.phase.name}</div>`;
+                }).join('')}</div>` : '';
+                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
                     style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                     <div class="bar-title">${nameWithDays}</div>
-                    ${phasesLine ? `<div class="bar-phases">${phasesLine}</div>` : ''}
+                    ${phaseBarsHtml}
                     <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
                     <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
                 </div>`;
             }).join('');
         }).join('');
- 
+
         const title = `${dates[0].getFullYear()}年 ${dates[0].getMonth() + 1}月${dates[0].getDate()}日 - ${dates[6].getMonth() + 1}月${dates[6].getDate()}日`;
  
         return `
