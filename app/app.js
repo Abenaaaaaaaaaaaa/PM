@@ -450,19 +450,16 @@ class ProjectManager {
     }
 
     // 计算阶段在任务条内的定位（百分比 left/width），相对任务条本身
-    // taskStart/taskEnd: 任务起止 Date，segStartOffset/segEndOffset: 当前段在周内的偏移
-    _phaseBarPositions(task, taskStart, taskEnd, segStartOffset, segEndOffset) {
+    // weekStartMidnight: 该周的周一零点 Date；segStartOffset/segEndOffset: 当前段在周内的偏移(0-6)
+    _phaseBarPositions(task, weekStartMidnight, segStartOffset, segEndOffset) {
         if (!task || !Array.isArray(task.phases) || task.phases.length === 0) return [];
-        const segStartMs = new Date(taskStart.getTime());
-        segStartMs.setDate(segStartMs.getDate() + (segStartOffset));
-        const segEndMs = new Date(taskEnd.getTime());
+        // 段的真实起止日期 = 周起始 + 周内偏移（关键修正：必须基于周起始而非任务起始）
+        const segLeftMs = new Date(weekStartMidnight.getTime());
+        segLeftMs.setDate(segLeftMs.getDate() + segStartOffset);
+        const segRightMs = new Date(weekStartMidnight.getTime());
+        segRightMs.setDate(segRightMs.getDate() + segEndOffset);
         // 段的覆盖范围（天数），用作分母计算百分比
         const segSpan = segEndOffset - segStartOffset + 1; // ≥1
-        const segLeftMs = new Date(taskStart.getTime());
-        segLeftMs.setDate(segLeftMs.getDate() + segStartOffset);
-        const segRightMs = new Date(taskStart.getTime());
-        segRightMs.setDate(segRightMs.getDate() + segEndOffset);
-        const segLeftDay = Math.round((segLeftMs - taskStart) / 86400000);
         const positions = [];
         task.phases.forEach(ph => {
             if (!ph.name) return;
@@ -1448,7 +1445,7 @@ class ProjectManager {
                     const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
                     // 计算阶段迷你条在该段内的位置（相对任务条百分比）
                     const phasePositions = hasPhases
-                        ? this._phaseBarPositions(t.task, taskStart, taskEnd, seg.startOffset, seg.endOffset)
+                        ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
                         : [];
                     const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
                         return `<div class="phase-mini-bar" style="left:${p.left}%;width:${p.width}%;background:${isArchived ? '#cbd5e1' : c};color:${isArchived ? '#64748b' : '#fff'}" title="${p.phase.name}">${p.phase.name}</div>`;
@@ -1570,7 +1567,7 @@ class ProjectManager {
                 const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
                 // 计算阶段迷你条在该段内的位置（相对任务条百分比）
                 const phasePositions = hasPhases
-                    ? this._phaseBarPositions(t.task, taskStart, taskEnd, seg.startOffset, seg.endOffset)
+                    ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
                     : [];
                 const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
                     return `<div class="phase-mini-bar" style="left:${p.left}%;width:${p.width}%;background:${isArchived ? '#cbd5e1' : c};color:${isArchived ? '#64748b' : '#fff'}" title="${p.phase.name}">${p.phase.name}</div>`;
