@@ -814,7 +814,7 @@ class ProjectManager {
             // 客户分组头
             rows.push(`
                 <tr class="group-header" data-customer="${c.id}">
-                    <td colspan="5" class="bg-blue-50/80 border-l-4 border-blue-500 py-2 px-4">
+                    <td colspan="6" class="bg-blue-50/80 border-l-4 border-blue-500 py-2 px-4">
                         <div class="flex items-center gap-2">
                             <button onclick="app.toggleTableCollapse('${c.id}')" class="text-blue-600 hover:text-blue-800 flex-shrink-0">${collapseIcon(cCollapsed)}</button>
                             <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
@@ -834,7 +834,7 @@ class ProjectManager {
                     // 项目分组头
                     rows.push(`
                         <tr class="group-header" data-customer="${c.id}" data-project="${p.id}">
-                            <td colspan="5" class="bg-green-50/60 border-l-4 border-green-500 py-2 pl-10 pr-4">
+                            <td colspan="6" class="bg-green-50/60 border-l-4 border-green-500 py-2 pl-10 pr-4">
                                 <div class="flex items-center justify-between">
                                     <div class="flex items-center gap-2">
                                         <button onclick="app.toggleTableCollapse('${p.id}')" class="text-green-600 hover:text-green-800 flex-shrink-0">${collapseIcon(pCollapsed)}</button>
@@ -863,8 +863,6 @@ class ProjectManager {
                                     </td>`
                                     : '';
 
-                                const editTaskBtn = `<button onclick="app.openTaskModal(null, null, '${t.id}')" class="text-green-600 hover:text-green-700 text-xs font-medium">编辑任务</button>`;
-
                                 rows.push(`
                                     <tr class="task-row" draggable="true" data-task-id="${t.id}" data-stage-id="${s.id}" data-project-id="${p.id}" data-customer-id="${c.id}">
                                         ${stageCell}
@@ -874,7 +872,6 @@ class ProjectManager {
                                                     <svg class="w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a1 1 0 100 2 1 1 0 000-2zM7 9a1 1 0 100 2 1 1 0 000-2zM7 14a1 1 0 100 2 1 1 0 000-2zM13 4a1 1 0 100 2 1 1 0 000-2zM13 9a1 1 0 100 2 1 1 0 000-2zM13 14a1 1 0 100 2 1 1 0 000-2z"></path></svg>
                                                 </span>
                                                 <span class="editable-cell inline-block" data-type="text" data-id="${t.id}" data-field="name">${t.name}</span>
-                                                ${editTaskBtn}
                                             </div>
                                         </td>
                                         <td class="editable-cell" data-type="date" data-id="${t.id}" data-field="startDate">${t.startDate}</td>
@@ -883,6 +880,9 @@ class ProjectManager {
                                             <button onclick="app.toggleTaskArchived('${t.id}')" class="task-status-badge ${t.archived ? 'archived' : 'active'}">
                                                 ${t.archived ? '已归档' : '进行中'}
                                             </button>
+                                        </td>
+                                        <td class="align-middle">
+                                            <button onclick="app.openTaskModal(null, null, '${t.id}')" class="text-green-600 hover:text-green-700 text-xs font-medium">编辑任务</button>
                                         </td>
                                     </tr>
                                 `);
@@ -909,7 +909,7 @@ class ProjectManager {
                 <div class="overflow-x-auto">
                     <table class="data-table" id="dataTable">
                         <colgroup>
-                            <col style="width:140px"><col style="width:auto"><col style="width:120px"><col style="width:120px"><col style="width:90px">
+                            <col style="width:140px"><col style="width:auto"><col style="width:120px"><col style="width:120px"><col style="width:90px"><col style="width:80px">
                         </colgroup>
                         <thead>
                             <tr>
@@ -918,10 +918,11 @@ class ProjectManager {
                                 <th>开始时间<div class="col-resizer"></div></th>
                                 <th>结束时间<div class="col-resizer"></div></th>
                                 <th>状态</th>
+                                <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${rows.length === 0 ? `<tr><td colspan="5" class="text-center text-gray-400 py-12">${this.searchKeyword ? '没有找到匹配的任务' : '暂无任务'}</td></tr>` : rows.join('')}
+                            ${rows.length === 0 ? `<tr><td colspan="6" class="text-center text-gray-400 py-12">${this.searchKeyword ? '没有找到匹配的任务' : '暂无任务'}</td></tr>` : rows.join('')}
                         </tbody>
                     </table>
                 </div>
