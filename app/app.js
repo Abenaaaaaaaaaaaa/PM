@@ -358,7 +358,81 @@ class ProjectManager {
     isHoliday(d) {
         return this.getHolidayName(d) !== null;
     }
- 
+
+    // ---------- 工作日 / 休息日判定（含 2026 法定节假日与调休）----------
+    // 2026 法定节假日（休息日）。仅记录"额外休息日"——即非周末的假日；
+    // 周末默认即休息，故周末日期无需重复登记。
+    _2026HolidayRestDays = new Set([
+        '2026-01-01',              // 元旦
+        '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-23', // 春节（2-21/22 周末）
+        '2026-04-06',              // 清明（4-4/5 周末）
+        '2026-05-01', '2026-05-04', '2026-05-05', // 劳动节（5-2/3 周末）
+        '2026-06-19',              // 端午（6-20/21 周末）
+        '2026-09-25', '2026-09-28', '2026-09-29', '2026-09-30', // 中秋+国庆前段（9-26/27 周末）
+        '2026-10-01', '2026-10-02', '2026-10-05', '2026-10-06', '2026-10-07' // 国庆（10-3/4 周末）
+    ]);
+
+    // 2026 调休工作日（周末但需上班）
+    _2026MakeupWorkdays = new Set([
+        '2026-02-14', // 春节前调休（周六）
+        '2026-02-28', // 春节后调休（周六）
+        '2026-04-26', // 劳动节前调休（周日）
+        '2026-09-19', // 中秋国庆前调休（周六）
+        '2026-10-10'  // 国庆后调休（周六）
+    ]);
+
+    // 是否为休息日：周末 或 法定假日，但调休工作日不算
+    isRestDay(d) {
+        const dateStr = this.formatDateISO(d);
+        if (this._2026MakeupWorkdays.has(dateStr)) return false; // 调休工作日
+        if (this._2026HolidayRestDays.has(dateStr)) return true; // 法定假日
+        const day = d.getDay();
+        return day === 0 || day === 6; // 默认周末休息
+    }
+
+    isWorkday(d) {
+        return !this.isRestDay(d);
+    }
+
+    // 统计 [start, end] 区间内的工作日数
+    countWorkdays(startDate, endDate) {
+        if (!startDate) return 0;
+        const s = this.parseDate(startDate);
+        if (!s) return 0;
+        let start = s;
+        let end = endDate ? this.parseDate(endDate) : start;
+        if (!end) end = start;
+        if (end < start) { const t = start; start = end; end = t; } // 起止颠倒则交换
+        let count = 0;
+        const cur = new Date(start.getTime());
+        const endMs = end.getTime();
+        while (cur.getTime() <= endMs) {
+            if (this.isWorkday(cur)) count++;
+            cur.setDate(cur.getDate() + 1);
+        }
+        return count;
+    }
+
+    // 计算任务在指定周内的工作日连续段（用于"仅工作日执行"任务条分段渲染）
+    _workdaySegmentsInWeek(taskStart, taskEnd, weekStartMidnight) {
+        const segs = [];
+        let curStart = null;
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(weekStartMidnight.getTime());
+            d.setDate(d.getDate() + i);
+            const inRange = d.getTime() >= taskStart.getTime() && d.getTime() <= taskEnd.getTime();
+            const isWork = this.isWorkday(d);
+            if (inRange && isWork) {
+                if (curStart === null) curStart = i;
+            } else if (curStart !== null) {
+                segs.push({ startOffset: curStart, endOffset: i - 1 });
+                curStart = null;
+            }
+        }
+        if (curStart !== null) segs.push({ startOffset: curStart, endOffset: 6 });
+        return segs;
+    }
+
     parseDate(dateStr) {
         if (!dateStr) return null;
         const [y, m, d] = dateStr.split('-').map(Number);
@@ -436,7 +510,7 @@ class ProjectManager {
                             </span>
                         ` : '<span class="w-4"></span>'}
                         <span class="tree-icon">${icons[node.type]}</span>
-                        <span class="text-sm text-gray-700 truncate flex-1">${node.name}</span>
+                        <span class="text-sm text-gray-700 truncate flex-1">${node.name}${node.type === 'task' && this.countWorkdays(node.startDate, node.endDate) > 0 ? `<span class="workday-count" title="花费工作日数">（${this.countWorkdays(node.startDate, node.endDate)}）</span>${node.workdaysOnly ? '<span class="workday-only-tag" title="仅工作日执行">班</span>' : ''}` : ''}</span>
                         <span class="tree-actions">
                             ${addActions[node.type] || ''}
                             <button onclick="event.stopPropagation();app.deleteNode('${node.id}')" class="tree-action-btn" title="删除">
@@ -504,6 +578,7 @@ class ProjectManager {
             newNode.startDate = '';
             newNode.endDate = '';
             newNode.archived = false;
+            newNode.workdaysOnly = false;
         }
  
         parent.children = parent.children || [];
@@ -655,9 +730,10 @@ class ProjectManager {
             const gist = await res.json();
             this.saveGistConfig(cleanToken, gist.id);
             this.updateSyncStatus(`同步成功 · ${new Date().toLocaleTimeString()}`);
+            this.showToast('推送成功，数据已同步到云端', 'success');
             return gist;
         } catch (e) {
-            alert('同步失败：' + e.message);
+            this.showToast('推送失败：' + e.message, 'error');
             console.error(e);
         }
     }
@@ -707,10 +783,11 @@ class ProjectManager {
             this.saveToLocal();
             this.renderAll();
             this.updateSyncStatus(`已从云端拉取 · ${new Date().toLocaleTimeString()}`);
+            if (!silent) this.showToast('拉取成功，已加载云端数据', 'success');
             return parsed;
         } catch (e) {
             if (!silent) {
-                alert('拉取失败：' + e.message + '\n\n如果是 404 错误，可能是 Gist ID 已失效，请重新同步一次。');
+                this.showToast('拉取失败：' + e.message, 'error');
             }
             console.error(e);
             return null;
@@ -719,7 +796,36 @@ class ProjectManager {
  
     updateSyncStatus(text) {
         const el = document.getElementById('syncStatus');
-        if (el) el.textContent = text;
+        if (el) {
+            el.textContent = text;
+            el.classList.remove('hidden');
+        }
+    }
+
+    // ---------- 全局提示 toast ----------
+    showToast(message, type = 'success') {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        const toast = document.createElement('div');
+        const palette = type === 'error'
+            ? { bg: 'bg-red-50', border: 'border-red-200', icon: 'text-red-500', dot: '#ef4444' }
+            : type === 'warning'
+            ? { bg: 'bg-amber-50', border: 'border-amber-200', icon: 'text-amber-500', dot: '#f59e0b' }
+            : { bg: 'bg-green-50', border: 'border-green-200', icon: 'text-green-500', dot: '#22c55e' };
+        const iconPath = type === 'error'
+            ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>'
+            : type === 'warning'
+            ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"/>'
+            : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>';
+        toast.className = `pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-lg border shadow-md text-sm ${palette.bg} ${palette.border} text-gray-700 toast-anim`;
+        toast.innerHTML = `<svg class="w-4 h-4 ${palette.icon}" fill="none" stroke="currentColor" viewBox="0 0 24 24">${iconPath}</svg><span>${message}</span>`;
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(20px)';
+            toast.style.transition = 'all 0.3s';
+            setTimeout(() => toast.remove(), 300);
+        }, 2600);
     }
  
     openSyncModal() {
@@ -864,15 +970,16 @@ class ProjectManager {
                                     </td>`
                                     : '';
 
+                                const taskWorkdays = this.countWorkdays(t.startDate, t.endDate);
                                 rows.push(`
-                                    <tr class="task-row" draggable="true" data-task-id="${t.id}" data-stage-id="${s.id}" data-project-id="${p.id}" data-customer-id="${c.id}">
+                                    <tr class="task-row ${t.archived ? 'archived-task-row' : ''}" draggable="true" data-task-id="${t.id}" data-stage-id="${s.id}" data-project-id="${p.id}" data-customer-id="${c.id}">
                                         ${stageCell}
                                         <td class="font-medium text-pink-700">
                                             <div class="flex items-center gap-1.5">
                                                 <span class="drag-handle" title="拖拽排序">
                                                     <svg class="w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a1 1 0 100 2 1 1 0 000-2zM7 9a1 1 0 100 2 1 1 0 000-2zM7 14a1 1 0 100 2 1 1 0 000-2zM13 4a1 1 0 100 2 1 1 0 000-2zM13 9a1 1 0 100 2 1 1 0 000-2zM13 14a1 1 0 100 2 1 1 0 000-2z"></path></svg>
                                                 </span>
-                                                <span class="editable-cell inline-block" data-type="text" data-id="${t.id}" data-field="name">${t.name}</span>
+                                                <span class="editable-cell inline-block" data-type="text" data-id="${t.id}" data-field="name">${t.name}</span>${taskWorkdays > 0 ? `<span class="workday-count" title="花费工作日数">（${taskWorkdays}）</span>` : ''}${t.workdaysOnly ? `<span class="workday-only-tag" title="仅工作日执行">班</span>` : ''}
                                             </div>
                                         </td>
                                         <td class="editable-cell" data-type="date" data-id="${t.id}" data-field="startDate">${t.startDate}</td>
@@ -1229,27 +1336,45 @@ class ProjectManager {
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                 const holidayName = this.getHolidayName(d);
                 const isHoliday = !!holidayName;
-                return `<div class="calendar-day ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''}">
+                const isRest = this.isRestDay(d);
+                const dateStr = this.formatDateISO(d);
+                const isMakeup = this._2026MakeupWorkdays.has(dateStr);
+                const restTag = isMakeup ? '<span class="calendar-day-tag tag-work">班</span>'
+                    : (isRest && !isWeekend && !isHoliday) ? '<span class="calendar-day-tag tag-rest">休</span>' : '';
+                return `<div class="calendar-day ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''} ${isRest && !isMakeup ? 'rest-day' : ''} ${isMakeup ? 'makeup-day' : ''}">
                     <div class="calendar-day-header">
-                        <div class="calendar-day-number" ${isHoliday ? `title="${holidayName}"` : ''}>${d.getDate()}</div>
+                        <div class="calendar-day-number" ${isHoliday ? `title="${holidayName}"` : ''}>${d.getDate()}${restTag}</div>
                         ${isHoliday ? `<span class="calendar-holiday-tag">${holidayName}</span>` : ''}
                     </div>
                 </div>`;
             }).join('');
  
             const taskBars = layoutTasks.map(t => {
-                const left = (t.startOffset / 7) * 100;
-                const width = ((t.endOffset - t.startOffset + 1) / 7) * 100;
                 const top = t.lane * (BAR_HEIGHT + BAR_GAP);
                 const c = t.stageColor;
                 const isArchived = t.task.archived;
- 
-                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''}" data-event-id="${t.task.id}"
-                    style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
-                    <div class="bar-title">${t.task.name}</div>
-                    <div class="bar-meta">${t.projectName} · ${t.stageName}</div>
-                    <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
-                </div>`;
+                const taskStart = this.parseDate(t.task.startDate);
+                const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
+                const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
+                const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
+
+                // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
+                const segments = t.task.workdaysOnly
+                    ? this._workdaySegmentsInWeek(taskStart, taskEnd, weekStartMidnight)
+                    : [{ startOffset: t.startOffset, endOffset: t.endOffset }];
+
+                if (segments.length === 0) return '';
+
+                return segments.map(seg => {
+                    const left = (seg.startOffset / 7) * 100;
+                    const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
+                    return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''}" data-event-id="${t.task.id}"
+                        style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
+                        <div class="bar-title">${nameWithDays}</div>
+                        <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
+                        <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
+                    </div>`;
+                }).join('');
             }).join('');
  
             return `
@@ -1325,24 +1450,43 @@ class ProjectManager {
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
             const holidayName = this.getHolidayName(d);
             const isHoliday = !!holidayName;
-            return `<div class="week-day-cell ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''}">
+            const isRest = this.isRestDay(d);
+            const dateStr = this.formatDateISO(d);
+            const isMakeup = this._2026MakeupWorkdays.has(dateStr);
+            const restTag = isMakeup ? '<span class="calendar-day-tag tag-work">班</span>'
+                : (isRest && !isWeekend && !isHoliday) ? '<span class="calendar-day-tag tag-rest">休</span>' : '';
+            return `<div class="week-day-cell ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''} ${isRest && !isMakeup ? 'rest-day' : ''} ${isMakeup ? 'makeup-day' : ''}">
+                <div class="text-xs">${restTag}</div>
                 ${isHoliday ? `<div class="calendar-holiday-tag" style="margin-top:2px">${holidayName}</div>` : ''}
             </div>`;
         }).join('');
  
         const taskBars = layoutTasks.map(t => {
-            const left = (t.startOffset / 7) * 100;
-            const width = ((t.endOffset - t.startOffset + 1) / 7) * 100;
             const top = t.lane * (BAR_HEIGHT + BAR_GAP);
             const c = t.stageColor;
             const isArchived = t.task.archived;
- 
-            return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''}" data-event-id="${t.task.id}"
-                style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
-                <div class="bar-title">${t.task.name}</div>
-                <div class="bar-meta">${t.projectName} · ${t.stageName}</div>
-                <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
-            </div>`;
+            const taskStart = this.parseDate(t.task.startDate);
+            const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
+            const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
+            const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
+
+            // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
+            const segments = t.task.workdaysOnly
+                ? this._workdaySegmentsInWeek(taskStart, taskEnd, weekStartMidnight)
+                : [{ startOffset: t.startOffset, endOffset: t.endOffset }];
+
+            if (segments.length === 0) return '';
+
+            return segments.map(seg => {
+                const left = (seg.startOffset / 7) * 100;
+                const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
+                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''}" data-event-id="${t.task.id}"
+                    style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
+                    <div class="bar-title">${nameWithDays}</div>
+                    <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
+                    <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
+                </div>`;
+            }).join('');
         }).join('');
  
         const title = `${dates[0].getFullYear()}年 ${dates[0].getMonth() + 1}月${dates[0].getDate()}日 - ${dates[6].getMonth() + 1}月${dates[6].getDate()}日`;
@@ -2203,6 +2347,7 @@ class ProjectManager {
         document.getElementById('taskStart').value = startDate || '';
         document.getElementById('taskEnd').value = endDate || '';
         document.getElementById('taskArchived').checked = false;
+        document.getElementById('taskWorkdaysOnly').checked = false;
 
         // 设置标题
         document.getElementById('taskModalTitle').textContent = taskId ? '编辑任务' : '新建任务';
@@ -2219,6 +2364,7 @@ class ProjectManager {
                 document.getElementById('taskStart').value = node.startDate || startDate || '';
                 document.getElementById('taskEnd').value = node.endDate || endDate || '';
                 document.getElementById('taskArchived').checked = node.archived || false;
+                document.getElementById('taskWorkdaysOnly').checked = node.workdaysOnly || false;
                 // 找到所属的 customer 和 project
                 const path = [];
                 const findPath = (nodes) => {
@@ -2273,6 +2419,7 @@ class ProjectManager {
         const startDate = document.getElementById('taskStart').value;
         const endDate = document.getElementById('taskEnd').value;
         const archived = document.getElementById('taskArchived').checked;
+        const workdaysOnly = document.getElementById('taskWorkdaysOnly').checked;
  
         if (!name) { alert('请输入任务名称'); return; }
         if (!customerId) { alert('请选择品牌'); return; }
@@ -2288,6 +2435,7 @@ class ProjectManager {
                 task.startDate = startDate;
                 task.endDate = endDate;
                 task.archived = archived;
+                task.workdaysOnly = workdaysOnly;
  
                 // 如果关联的环节改变了，需要移动节点
                 const oldStage = this.findParent(task.id);
@@ -2312,6 +2460,7 @@ class ProjectManager {
                 startDate,
                 endDate,
                 archived: archived || false,
+                workdaysOnly: workdaysOnly || false,
                 children: []
             };
             const stage = this.findNode(stageId);

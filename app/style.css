@@ -867,3 +867,98 @@ tr.task-row:hover .drag-handle svg {
     border-color: #1e293b;
     box-shadow: 0 0 0 2px white, 0 0 0 4px #1e293b;
 }
+
+/* 已归档任务行（列表视图自动置灰） */
+.archived-task-row > td {
+    opacity: 0.55;
+    color: #94a3b8 !important;
+}
+.archived-task-row .editable-cell,
+.archived-task-row .font-medium {
+    color: #94a3b8 !important;
+    text-decoration: line-through;
+    text-decoration-color: rgba(148, 163, 184, 0.6);
+}
+.archived-task-row:hover > td {
+    background-color: #f8fafc;
+}
+
+/* 工作日数标注 */
+.workday-count {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6366f1;
+    background: #eef2ff;
+    padding: 1px 4px;
+    border-radius: 4px;
+    margin-left: 2px;
+    line-height: 1.4;
+}
+.archived-task-row .workday-count {
+    color: #94a3b8;
+    background: #f1f5f9;
+}
+
+/* 仅工作日执行 小标记 */
+.workday-only-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: #f59e0b;
+    padding: 1px 4px;
+    border-radius: 4px;
+    margin-left: 2px;
+    line-height: 1.4;
+}
+
+/* 日历：休息日/调休工作日 标记 */
+.calendar-day-tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    color: #fff;
+    border-radius: 3px;
+    padding: 0 3px;
+    margin-left: 3px;
+    line-height: 1.5;
+    vertical-align: middle;
+}
+.calendar-day-tag.tag-rest {
+    background: #94a3b8;
+}
+.calendar-day-tag.tag-work {
+    background: #f59e0b;
+}
+.calendar-day.rest-day:not(.other-month) {
+    background-color: #fafafa;
+}
+.calendar-day.rest-day .calendar-day-number {
+    color: #94a3b8;
+}
+.calendar-day.makeup-day .calendar-day-number {
+    color: #f59e0b;
+    font-weight: 700;
+}
+.week-day-cell.rest-day {
+    background-color: #fafafa;
+}
+.week-day-cell.makeup-day {
+    background-color: #fffbeb;
+}
+
+/* 仅工作日执行任务条（虚线边框，区别于普通任务） */
+.day-bar-item.workday-only-bar {
+    border-style: dashed !important;
+    border-width: 1.5px !important;
+}
+
+/* toast 动画 */
+.toast-anim {
+    animation: toast-in 0.25s ease-out;
+}
+@keyframes toast-in {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
