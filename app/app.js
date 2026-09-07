@@ -820,21 +820,28 @@ class ProjectManager {
                                         </div>
                                     </td>`
                                     : '';
- 
+
                                 const descCell = tIdx === 0
                                     ? `<td rowspan="${s.tasks.length}" class="max-w-xs text-sm text-gray-500 align-top editable-cell" data-type="textarea" data-id="${p.id}" data-field="description">${p.description || '-'}</td>`
                                     : '';
- 
+
                                 const actionCell = tIdx === 0
                                     ? `<td rowspan="${s.tasks.length}" class="align-middle">
                                         <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑项目</button>
                                     </td>`
                                     : '';
- 
+
                                 rows.push(`
-                                    <tr>
+                                    <tr class="task-row" draggable="true" data-task-id="${t.id}" data-stage-id="${s.id}" data-project-id="${p.id}" data-customer-id="${c.id}">
                                         ${stageCell}
-                                        <td class="font-medium text-pink-700 editable-cell" data-type="text" data-id="${t.id}" data-field="name">${t.name}</td>
+                                        <td class="font-medium text-pink-700">
+                                            <div class="flex items-center gap-1.5">
+                                                <span class="drag-handle" title="拖拽排序">
+                                                    <svg class="w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a1 1 0 100 2 1 1 0 000-2zM7 9a1 1 0 100 2 1 1 0 000-2zM7 14a1 1 0 100 2 1 1 0 000-2zM13 4a1 1 0 100 2 1 1 0 000-2zM13 9a1 1 0 100 2 1 1 0 000-2zM13 14a1 1 0 100 2 1 1 0 000-2z"></path></svg>
+                                                </span>
+                                                <span class="editable-cell inline-block" data-type="text" data-id="${t.id}" data-field="name">${t.name}</span>
+                                            </div>
+                                        </td>
                                         <td class="editable-cell" data-type="date" data-id="${t.id}" data-field="startDate">${t.startDate}</td>
                                         <td class="editable-cell" data-type="date" data-id="${t.id}" data-field="endDate">${t.endDate}</td>
                                         <td class="align-middle">
@@ -863,7 +870,7 @@ class ProjectManager {
                     <div class="flex items-center gap-3">
                         <button onclick="app.expandAllTableGroups()" class="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100">全部展开</button>
                         <button onclick="app.collapseAllTableGroups()" class="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100">全部折叠</button>
-                        <span class="text-xs text-gray-400">点击分组头折叠 · 点击单元格编辑</span>
+                        <span class="text-xs text-gray-400">点击分组头折叠 · 点击单元格编辑 · 拖拽任务行排序或跨环节移动</span>
                     </div>
                 </div>
                 <div class="overflow-x-auto">
@@ -1686,6 +1693,116 @@ class ProjectManager {
                 });
             });
         });
+
+        // 2.0 行拖拽排序
+        this.initRowDragSort(table);
+    }
+
+    // 2.0 行拖拽排序
+    initRowDragSort(table) {
+        let dragSrcRow = null;
+        let dragSrcTaskId = null;
+        let dragSrcStageId = null;
+
+        const taskRows = table.querySelectorAll('.task-row');
+
+        taskRows.forEach(row => {
+            // dragstart
+            row.addEventListener('dragstart', (e) => {
+                // 如果从可编辑单元格或按钮发起，取消拖拽
+                if (e.target.closest('.editable-cell.editing') || e.target.closest('button')) {
+                    e.preventDefault();
+                    return;
+                }
+                dragSrcRow = row;
+                dragSrcTaskId = row.dataset.taskId;
+                dragSrcStageId = row.dataset.stageId;
+                row.classList.add('dragging-row');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', dragSrcTaskId);
+            });
+
+            // dragend
+            row.addEventListener('dragend', () => {
+                row.classList.remove('dragging-row');
+                table.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(r => {
+                    r.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+                dragSrcRow = null;
+                dragSrcTaskId = null;
+                dragSrcStageId = null;
+            });
+
+            // dragover
+            row.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (!dragSrcRow || row === dragSrcRow) return;
+
+                // 判断鼠标在行的上半还是下半
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+                if (e.clientY < midY) {
+                    row.classList.add('drag-over-top');
+                } else {
+                    row.classList.add('drag-over-bottom');
+                }
+            });
+
+            // dragleave
+            row.addEventListener('dragleave', () => {
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+            });
+
+            // drop
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (!dragSrcTaskId || !dragSrcStageId) return;
+                const targetTaskId = row.dataset.taskId;
+                const targetStageId = row.dataset.stageId;
+                if (targetTaskId === dragSrcTaskId) return;
+
+                // 判断插入位置（前/后）
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                const insertBefore = e.clientY < midY;
+
+                this.moveTask(dragSrcTaskId, dragSrcStageId, targetTaskId, targetStageId, insertBefore);
+            });
+        });
+    }
+
+    // 2.0 移动任务到新位置
+    moveTask(taskId, fromStageId, targetTaskId, toStageId, insertBefore) {
+        const task = this.findNode(taskId);
+        if (!task) return;
+
+        // 从原环节移除
+        const fromStage = this.findNode(fromStageId);
+        if (fromStage && fromStage.children) {
+            fromStage.children = fromStage.children.filter(c => c.id !== taskId);
+        }
+
+        // 添加到目标环节
+        const toStage = this.findNode(toStageId);
+        if (!toStage) return;
+        toStage.children = toStage.children || [];
+
+        const targetIdx = toStage.children.findIndex(c => c.id === targetTaskId);
+        if (targetIdx === -1) {
+            // 目标不存在，追加到末尾
+            toStage.children.push(task);
+        } else {
+            // 插入到目标前或后
+            const insertIdx = insertBefore ? targetIdx : targetIdx + 1;
+            toStage.children.splice(insertIdx, 0, task);
+        }
+
+        // 如果跨了环节，展开目标环节
+        this.expandedNodes.add(toStageId);
+
+        this.renderAll();
     }
  
     // ---------- 日历交互（传统网格拖拽）----------

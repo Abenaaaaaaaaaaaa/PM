@@ -598,3 +598,30 @@ tr.group-header .flex.items-center {
 .archive-checkbox {
     cursor: pointer;
 }
+
+/* 2.0 行拖拽排序 */
+.drag-handle {
+    display: inline-flex;
+    align-items: center;
+    cursor: grab;
+    flex-shrink: 0;
+}
+.drag-handle:active {
+    cursor: grabbing;
+}
+tr.task-row {
+    transition: opacity 0.15s, background-color 0.15s;
+}
+tr.dragging-row {
+    opacity: 0.4;
+    background: #eff6ff !important;
+}
+tr.drag-over-top {
+    border-top: 3px solid #3b82f6;
+}
+tr.drag-over-bottom {
+    border-bottom: 3px solid #3b82f6;
+}
+tr.task-row:hover .drag-handle svg {
+    color: #64748b;
+}
