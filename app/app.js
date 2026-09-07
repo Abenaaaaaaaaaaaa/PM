@@ -427,7 +427,11 @@ class ProjectManager {
     selectNode(id) {
         this.selectedNodeId = id;
         this.renderTree();
-        // 可选：根据选中节点筛选主视图
+        // 如果点击的是任务节点，打开编辑弹窗
+        const node = this.findNode(id);
+        if (node && node.type === 'task') {
+            this.openTaskModal(null, null, id);
+        }
     }
  
     addCustomer() {
@@ -827,9 +831,13 @@ class ProjectManager {
 
                                 const actionCell = tIdx === 0
                                     ? `<td rowspan="${s.tasks.length}" class="align-middle">
-                                        <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑项目</button>
+                                        <div class="flex flex-col gap-1">
+                                            <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑项目</button>
+                                        </div>
                                     </td>`
                                     : '';
+
+                                const editTaskBtn = `<button onclick="app.openTaskModal(null, null, '${t.id}')" class="text-green-600 hover:text-green-700 text-xs font-medium">编辑任务</button>`;
 
                                 rows.push(`
                                     <tr class="task-row" draggable="true" data-task-id="${t.id}" data-stage-id="${s.id}" data-project-id="${p.id}" data-customer-id="${c.id}">
@@ -840,6 +848,7 @@ class ProjectManager {
                                                     <svg class="w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a1 1 0 100 2 1 1 0 000-2zM7 9a1 1 0 100 2 1 1 0 000-2zM7 14a1 1 0 100 2 1 1 0 000-2zM13 4a1 1 0 100 2 1 1 0 000-2zM13 9a1 1 0 100 2 1 1 0 000-2zM13 14a1 1 0 100 2 1 1 0 000-2z"></path></svg>
                                                 </span>
                                                 <span class="editable-cell inline-block" data-type="text" data-id="${t.id}" data-field="name">${t.name}</span>
+                                                ${editTaskBtn}
                                             </div>
                                         </td>
                                         <td class="editable-cell" data-type="date" data-id="${t.id}" data-field="startDate">${t.startDate}</td>
@@ -2028,22 +2037,27 @@ class ProjectManager {
             startDate,
             endDate
         };
- 
+
         document.getElementById('taskName').value = '';
         document.getElementById('taskDescription').value = '';
-        document.getElementById('taskStart').value = startDate;
-        document.getElementById('taskEnd').value = endDate;
+        document.getElementById('taskStart').value = startDate || '';
+        document.getElementById('taskEnd').value = endDate || '';
         document.getElementById('taskArchived').checked = false;
- 
+
+        // 设置标题
+        document.getElementById('taskModalTitle').textContent = taskId ? '编辑任务' : '新建任务';
+
         this.populateCustomerOptions();
         document.getElementById('taskProject').innerHTML = '<option value="">请选择</option>';
         document.getElementById('taskStage').innerHTML = '<option value="">请选择</option>';
- 
+
         if (taskId) {
             const node = this.findNode(taskId);
             if (node) {
                 document.getElementById('taskName').value = node.name;
                 document.getElementById('taskDescription').value = node.description || '';
+                document.getElementById('taskStart').value = node.startDate || startDate || '';
+                document.getElementById('taskEnd').value = node.endDate || endDate || '';
                 document.getElementById('taskArchived').checked = node.archived || false;
                 // 找到所属的 customer 和 project
                 const path = [];
