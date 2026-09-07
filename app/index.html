@@ -160,6 +160,35 @@
         </div>
     </div>
 
+    <!-- 环节编辑模态框（新建/编辑通用） -->
+    <div id="stageModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl w-[420px] max-w-[90%]">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 id="stageModalTitle" class="text-lg font-semibold text-gray-800">新建环节</h3>
+                <button onclick="app.closeStageModal()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="px-6 py-4 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">环节名称</label>
+                    <input type="text" id="stageNameInput" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="请输入环节名称">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">环节颜色</label>
+                    <div class="flex items-center gap-3">
+                        <input type="color" id="stageColorInput" value="#3b82f6" class="w-10 h-10 rounded cursor-pointer border border-gray-300">
+                        <div id="stageColorPresets" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+                <button onclick="app.closeStageModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                <button onclick="app.saveStageModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 任务编辑模态框（新建/编辑通用） -->
     <div id="taskModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-xl shadow-xl w-[600px] max-w-[92%] max-h-[90vh] overflow-hidden flex flex-col">

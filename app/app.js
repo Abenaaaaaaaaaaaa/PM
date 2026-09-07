@@ -420,9 +420,10 @@ class ProjectManager {
  
             const addActions = {
                 customer: `<button onclick="event.stopPropagation();app.showInputModal('新建项目', name => app.addChild('${node.id}', 'project', name))" class="tree-action-btn" title="添加项目"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>`,
-                project: `<button onclick="event.stopPropagation();app.showInputModal('新建环节', name => app.addChild('${node.id}', 'stage', name))" class="tree-action-btn" title="添加环节"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>` +
+                project: `<button onclick="event.stopPropagation();app.openStageModal(null, '${node.id}')" class="tree-action-btn" title="添加环节"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>` +
                          `<button onclick="event.stopPropagation();app.editProject('${node.id}')" class="tree-action-btn" title="编辑项目"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>`,
-                stage: `<button onclick="event.stopPropagation();app.showInputModal('新建任务', name => app.addChild('${node.id}', 'task', name))" class="tree-action-btn" title="添加任务"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>`,
+                stage: `<button onclick="event.stopPropagation();app.showInputModal('新建任务', name => app.addChild('${node.id}', 'task', name))" class="tree-action-btn" title="添加任务"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>` +
+                       `<button onclick="event.stopPropagation();app.openStageModal('${node.id}')" class="tree-action-btn" title="编辑环节"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>`,
                 task: '',
             };
  
@@ -1625,6 +1626,90 @@ class ProjectManager {
             this.inputModalCallback(value);
         }
         this.closeInputModal();
+    }
+
+    // ---------- 环节模态框 ----------
+
+    // 预设颜色
+    _stageColorPresets = ['#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#ef4444', '#64748b'];
+
+    openStageModal(stageId = null, parentId = null) {
+        // stageId 有值 = 编辑环节；parentId 有值 = 新建环节
+        this._stageModalData = { stageId, parentId };
+
+        const presets = this._stageColorPresets.map(c =>
+            `<button class="stage-color-preset" style="background:${c}" onclick="document.getElementById('stageColorInput').value='${c}';this.parentElement.querySelectorAll('.stage-color-preset').forEach(b=>b.classList.remove('selected'));this.classList.add('selected')" title="${c}"></button>`
+        ).join('');
+
+        document.getElementById('stageColorPresets').innerHTML = presets;
+
+        if (stageId) {
+            // 编辑环节
+            const node = this.findNode(stageId);
+            if (!node) return;
+            document.getElementById('stageModalTitle').textContent = '编辑环节';
+            document.getElementById('stageNameInput').value = node.name;
+            document.getElementById('stageColorInput').value = node.color || '#3b82f6';
+            // 高亮当前颜色
+            const currentColor = (node.color || '#3b82f6').toLowerCase();
+            setTimeout(() => {
+                document.querySelectorAll('.stage-color-preset').forEach(b => {
+                    if (b.style.backgroundColor === currentColor || b.title === currentColor) {
+                        b.classList.add('selected');
+                    }
+                });
+            }, 0);
+        } else {
+            // 新建环节
+            document.getElementById('stageModalTitle').textContent = '新建环节';
+            document.getElementById('stageNameInput').value = '';
+            document.getElementById('stageColorInput').value = '#3b82f6';
+        }
+
+        document.getElementById('stageModal').classList.remove('hidden');
+        document.getElementById('stageModal').classList.add('flex');
+        setTimeout(() => document.getElementById('stageNameInput').focus(), 100);
+    }
+
+    closeStageModal() {
+        document.getElementById('stageModal').classList.add('hidden');
+        document.getElementById('stageModal').classList.remove('flex');
+        this._stageModalData = null;
+    }
+
+    saveStageModal() {
+        const name = document.getElementById('stageNameInput').value.trim();
+        const color = document.getElementById('stageColorInput').value;
+        if (!name) { alert('请输入环节名称'); return; }
+
+        const { stageId, parentId } = this._stageModalData;
+
+        if (stageId) {
+            // 编辑环节
+            const node = this.findNode(stageId);
+            if (node) {
+                node.name = name;
+                node.color = color;
+            }
+        } else if (parentId) {
+            // 新建环节
+            const parent = this.findNode(parentId);
+            if (parent) {
+                const newNode = {
+                    id: this.generateId(),
+                    type: 'stage',
+                    name,
+                    color,
+                    children: []
+                };
+                parent.children = parent.children || [];
+                parent.children.push(newNode);
+                this.expandedNodes.add(parentId);
+            }
+        }
+
+        this.closeStageModal();
+        this.renderAll();
     }
  
     // ---------- 侧栏折叠/展开 ----------
