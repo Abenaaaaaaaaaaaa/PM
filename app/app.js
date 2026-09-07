@@ -27,6 +27,7 @@ class ProjectManager {
         this.tableCollapsed = new Set(); // 表格视图中折叠的节点ID
         this.archiveSearchKeyword = '';  // 归档搜索关键词
         this.archiveSortBy = 'endDate';  // 归档排序字段
+        this.favProjectIds = new Set(); // 常用项目快捷按钮
  
         // 颜色池，用于日历事件
         this.colors = [
@@ -53,9 +54,36 @@ class ProjectManager {
         } else {
             this.data = this.getDefaultData();
         }
- 
+
         // 默认展开所有节点
         this.traverse(node => this.expandedNodes.add(node.id));
+
+        // 初始化常用项目（localStorage 持久化）
+        const savedFavs = localStorage.getItem('pmFavProjects');
+        if (savedFavs) {
+            try { this.favProjectIds = new Set(JSON.parse(savedFavs)); } catch(e) {}
+        }
+        if (this.favProjectIds.size === 0) {
+            // 默认取前3个项目作为常用
+            const projects = this.getProjectsList();
+            projects.slice(0, 3).forEach(p => this.favProjectIds.add(p.id));
+        }
+    }
+
+    saveFavProjects() {
+        localStorage.setItem('pmFavProjects', JSON.stringify([...this.favProjectIds]));
+    }
+
+    addFavProject(projectId) {
+        this.favProjectIds.add(projectId);
+        this.saveFavProjects();
+        this.renderMain();
+    }
+
+    removeFavProject(projectId) {
+        this.favProjectIds.delete(projectId);
+        this.saveFavProjects();
+        this.renderMain();
     }
  
     getDefaultData() {
@@ -209,6 +237,9 @@ class ProjectManager {
         // 点击外部关闭多选下拉框
         document.addEventListener('click', (e) => {
             document.querySelectorAll('.project-multiselect-wrapper.open').forEach(w => {
+                if (!w.contains(e.target)) w.classList.remove('open');
+            });
+            document.querySelectorAll('.project-fav-add-wrapper.open').forEach(w => {
                 if (!w.contains(e.target)) w.classList.remove('open');
             });
         });
@@ -1055,7 +1086,7 @@ class ProjectManager {
         this.renderAll();
     }
 
-    // 2.0 项目筛选 UI：多选下拉框 + 常用项目快捷按钮
+    // 2.0 项目筛选 UI：多选下拉框 + 常用项目快捷按钮（可增删）
     renderProjectFilter(projects) {
         const selectedNames = this.selectedProjectIds.size === 0
             ? '全部项目'
@@ -1068,11 +1099,22 @@ class ProjectManager {
             </label>
         `).join('');
 
-        // 常用项目快捷按钮（最多5个）
-        const favProjects = projects.slice(0, 5);
+        // 常用项目快捷按钮（可增删）
+        const favProjects = projects.filter(p => this.favProjectIds.has(p.id));
         const favBtns = favProjects.map(p => `
-            <button class="project-fav-btn ${this.selectedProjectIds.has(p.id) ? 'active' : ''}" onclick="app.toggleProjectFilter('${p.id}')">${p.name}</button>
+            <span class="project-fav-chip ${this.selectedProjectIds.has(p.id) ? 'active' : ''}">
+                <span onclick="app.toggleProjectFilter('${p.id}')">${p.name}</span>
+                <button class="project-fav-remove" onclick="event.stopPropagation();app.removeFavProject('${p.id}')" title="移除常用">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </span>
         `).join('');
+
+        // 添加常用项目下拉
+        const nonFavProjects = projects.filter(p => !this.favProjectIds.has(p.id));
+        const addFavOptions = nonFavProjects.length > 0
+            ? nonFavProjects.map(p => `<div class="project-fav-add-item" onclick="app.addFavProject('${p.id}');event.stopPropagation();">${p.name}</div>`).join('')
+            : '<div class="project-fav-add-empty">所有项目已添加</div>';
 
         return `
             <div class="project-filter-bar">
@@ -1089,7 +1131,15 @@ class ProjectManager {
                         ${options}
                     </div>
                 </div>
-                <div class="project-fav-btns">${favBtns}</div>
+                <div class="project-fav-btns">
+                    ${favBtns}
+                    <div class="project-fav-add-wrapper">
+                        <button class="project-fav-add-btn" onclick="this.parentElement.classList.toggle('open');event.stopPropagation();" title="添加常用项目">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        </button>
+                        <div class="project-fav-add-dropdown">${addFavOptions}</div>
+                    </div>
+                </div>
             </div>
         `;
     }
