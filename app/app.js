@@ -205,6 +205,13 @@ class ProjectManager {
     init() {
         this.renderTree();
         this.renderMain();
+
+        // 点击外部关闭多选下拉框
+        document.addEventListener('click', (e) => {
+            document.querySelectorAll('.project-multiselect-wrapper.open').forEach(w => {
+                if (!w.contains(e.target)) w.classList.remove('open');
+            });
+        });
     }
  
     // ---------- 工具方法 ----------
@@ -776,7 +783,7 @@ class ProjectManager {
             // 客户分组头
             rows.push(`
                 <tr class="group-header" data-customer="${c.id}">
-                    <td colspan="7" class="bg-blue-50/80 border-l-4 border-blue-500 py-2 px-4">
+                    <td colspan="5" class="bg-blue-50/80 border-l-4 border-blue-500 py-2 px-4">
                         <div class="flex items-center gap-2">
                             <button onclick="app.toggleTableCollapse('${c.id}')" class="text-blue-600 hover:text-blue-800 flex-shrink-0">${collapseIcon(cCollapsed)}</button>
                             <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
@@ -796,7 +803,7 @@ class ProjectManager {
                     // 项目分组头
                     rows.push(`
                         <tr class="group-header" data-customer="${c.id}" data-project="${p.id}">
-                            <td colspan="7" class="bg-green-50/60 border-l-4 border-green-500 py-2 pl-10 pr-4">
+                            <td colspan="5" class="bg-green-50/60 border-l-4 border-green-500 py-2 pl-10 pr-4">
                                 <div class="flex items-center justify-between">
                                     <div class="flex items-center gap-2">
                                         <button onclick="app.toggleTableCollapse('${p.id}')" class="text-green-600 hover:text-green-800 flex-shrink-0">${collapseIcon(pCollapsed)}</button>
@@ -806,7 +813,7 @@ class ProjectManager {
                                         <span class="text-xs text-green-400">${pTaskCount} 个任务</span>
                                     </div>
                                     <div class="flex items-center gap-3">
-                                        <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑</button>
+                                        <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑项目信息</button>
                                     </div>
                                 </div>
                             </td>
@@ -821,18 +828,6 @@ class ProjectManager {
                                         <div class="flex items-center gap-2">
                                             <div class="stage-color-dot-table" style="background:${s.color};width:14px;height:14px;border-radius:50%;cursor:pointer;flex-shrink:0;border:2px solid white;box-shadow:0 0 0 1px ${s.color}" onclick="app.openColorPicker('${s.name.replace(/'/g, "\\'")}', event)" title="点击修改颜色"></div>
                                             <span class="editable-cell inline-block" data-type="text" data-id="${s.id}" data-field="name" style="color:${s.color};font-weight:600">${s.name}</span>
-                                        </div>
-                                    </td>`
-                                    : '';
-
-                                const descCell = tIdx === 0
-                                    ? `<td rowspan="${s.tasks.length}" class="max-w-xs text-sm text-gray-500 align-top editable-cell" data-type="textarea" data-id="${p.id}" data-field="description">${p.description || '-'}</td>`
-                                    : '';
-
-                                const actionCell = tIdx === 0
-                                    ? `<td rowspan="${s.tasks.length}" class="align-middle">
-                                        <div class="flex flex-col gap-1">
-                                            <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑项目</button>
                                         </div>
                                     </td>`
                                     : '';
@@ -858,8 +853,6 @@ class ProjectManager {
                                                 ${t.archived ? '已归档' : '进行中'}
                                             </button>
                                         </td>
-                                        ${descCell}
-                                        ${actionCell}
                                     </tr>
                                 `);
                             });
@@ -885,7 +878,7 @@ class ProjectManager {
                 <div class="overflow-x-auto">
                     <table class="data-table" id="dataTable">
                         <colgroup>
-                            <col style="width:140px"><col style="width:160px"><col style="width:120px"><col style="width:120px"><col style="width:90px"><col style="width:200px"><col style="width:100px">
+                            <col style="width:140px"><col style="width:auto"><col style="width:120px"><col style="width:120px"><col style="width:90px">
                         </colgroup>
                         <thead>
                             <tr>
@@ -893,13 +886,11 @@ class ProjectManager {
                                 <th>任务<div class="col-resizer"></div></th>
                                 <th>开始时间<div class="col-resizer"></div></th>
                                 <th>结束时间<div class="col-resizer"></div></th>
-                                <th>状态<div class="col-resizer"></div></th>
-                                <th>简介<div class="col-resizer"></div></th>
-                                <th>操作</th>
+                                <th>状态</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${rows.length === 0 ? `<tr><td colspan="7" class="text-center text-gray-400 py-12">${this.searchKeyword ? '没有找到匹配的任务' : '暂无任务'}</td></tr>` : rows.join('')}
+                            ${rows.length === 0 ? `<tr><td colspan="5" class="text-center text-gray-400 py-12">${this.searchKeyword ? '没有找到匹配的任务' : '暂无任务'}</td></tr>` : rows.join('')}
                         </tbody>
                     </table>
                 </div>
@@ -1064,6 +1055,45 @@ class ProjectManager {
         this.renderAll();
     }
 
+    // 2.0 项目筛选 UI：多选下拉框 + 常用项目快捷按钮
+    renderProjectFilter(projects) {
+        const selectedNames = this.selectedProjectIds.size === 0
+            ? '全部项目'
+            : projects.filter(p => this.selectedProjectIds.has(p.id)).map(p => p.name).join(', ');
+
+        const options = projects.map(p => `
+            <label class="project-multiselect-item" onclick="event.stopPropagation()">
+                <input type="checkbox" value="${p.id}" ${this.selectedProjectIds.has(p.id) ? 'checked' : ''} onchange="app.toggleProjectFilter('${p.id}')">
+                <span>${p.name}</span>
+            </label>
+        `).join('');
+
+        // 常用项目快捷按钮（最多5个）
+        const favProjects = projects.slice(0, 5);
+        const favBtns = favProjects.map(p => `
+            <button class="project-fav-btn ${this.selectedProjectIds.has(p.id) ? 'active' : ''}" onclick="app.toggleProjectFilter('${p.id}')">${p.name}</button>
+        `).join('');
+
+        return `
+            <div class="project-filter-bar">
+                <div class="project-multiselect-wrapper">
+                    <div class="project-multiselect-trigger" onclick="this.parentElement.classList.toggle('open')">
+                        <span class="project-multiselect-label">${selectedNames}</span>
+                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </div>
+                    <div class="project-multiselect-dropdown">
+                        <label class="project-multiselect-item" onclick="event.stopPropagation()">
+                            <input type="checkbox" ${this.selectedProjectIds.size === 0 ? 'checked' : ''} onchange="app.toggleProjectFilter('all')">
+                            <span>全部项目</span>
+                        </label>
+                        ${options}
+                    </div>
+                </div>
+                <div class="project-fav-btns">${favBtns}</div>
+            </div>
+        `;
+    }
+
     // 2.0 搜索输入（防抖，只渲染主视图不渲染树）
     onSearchInput(value) {
         clearTimeout(this._searchTimer);
@@ -1117,11 +1147,8 @@ class ProjectManager {
         const allTasks = this.collectTasks();
         const projects = this.getProjectsList();
  
-        // 项目筛选 Tab（多选）
-        const filterTabs = `<div class="project-filter-tabs">
-            <div class="project-filter-tab ${this.selectedProjectIds.size === 0 ? 'active' : ''}" onclick="app.toggleProjectFilter('all')">全部项目</div>
-            ${projects.map(p => `<div class="project-filter-tab ${this.selectedProjectIds.has(p.id) ? 'active' : ''}" onclick="app.toggleProjectFilter('${p.id}')">${p.name}</div>`).join('')}
-        </div>`;
+        // 项目筛选 UI（多选下拉 + 常用快捷按钮）
+        const filterTabs = this.renderProjectFilter(projects);
  
         const header = weekDayNames.map(d =>
             `<div class="calendar-header-cell">${d}</div>`
@@ -1230,10 +1257,7 @@ class ProjectManager {
         const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
         const weekHeight = Math.max(220, 40 + laneCount * (BAR_HEIGHT + BAR_GAP));
  
-        const filterTabs = `<div class="project-filter-tabs">
-            <div class="project-filter-tab ${this.selectedProjectIds.size === 0 ? 'active' : ''}" onclick="app.toggleProjectFilter('all')">全部项目</div>
-            ${projects.map(p => `<div class="project-filter-tab ${this.selectedProjectIds.has(p.id) ? 'active' : ''}" onclick="app.toggleProjectFilter('${p.id}')">${p.name}</div>`).join('')}
-        </div>`;
+        const filterTabs = this.renderProjectFilter(projects);
  
         const header = weekDayNames.map((d, i) => {
             const isToday = this.isSameDay(dates[i], today);

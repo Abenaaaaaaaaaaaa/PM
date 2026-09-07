@@ -365,6 +365,113 @@
     box-shadow: 0 2px 4px rgba(59,130,246,0.3);
 }
 
+/* 2.0 项目多选下拉框 + 常用快捷按钮 */
+.project-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.project-multiselect-wrapper {
+    position: relative;
+    min-width: 200px;
+}
+.project-multiselect-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 12px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: border-color 0.15s;
+}
+.project-multiselect-trigger:hover {
+    border-color: #3b82f6;
+}
+.project-multiselect-label {
+    color: #334155;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 280px;
+}
+.project-multiselect-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    max-height: 240px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    z-index: 50;
+    padding: 4px;
+}
+.project-multiselect-wrapper.open .project-multiselect-dropdown {
+    display: block;
+}
+.project-multiselect-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #334155;
+    transition: background 0.1s;
+}
+.project-multiselect-item:hover {
+    background: #f1f5f9;
+}
+.project-multiselect-item input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: #3b82f6;
+    cursor: pointer;
+}
+.project-multiselect-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.project-fav-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.project-fav-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: white;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    white-space: nowrap;
+}
+.project-fav-btn:hover {
+    background: #f1f5f9;
+    color: #334155;
+}
+.project-fav-btn.active {
+    background: #3b82f6;
+    color: white;
+    border-color: #3b82f6;
+    box-shadow: 0 2px 4px rgba(59,130,246,0.3);
+}
+
 /* 任务横条（跨天显示） */
 .day-bar-layer {
     position: absolute;
