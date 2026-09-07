@@ -433,6 +433,29 @@ class ProjectManager {
         return segs;
     }
 
+    // 渲染任务阶段（日历任务条中间行 + 弹窗外其他展示位）
+    _renderPhasesLine(task) {
+        if (!task || !Array.isArray(task.phases) || task.phases.length === 0) return '';
+        // 只展示有名称的阶段；格式：阶段A 7/1~7/5 · 阶段B 7/6~7/10
+        const parts = task.phases
+            .filter(p => p && p.name)
+            .map(p => {
+                const s = p.startDate ? this._shortDate(p.startDate) : '';
+                const e = p.endDate ? this._shortDate(p.endDate) : '';
+                const range = (s || e) ? ` ${s}${e ? '~' + e : ''}` : '';
+                return `<span class="phase-chip">${p.name}${range}</span>`;
+            })
+            .filter(html => html);
+        return parts.length ? parts.join('<span class="phase-sep">·</span>') : '';
+    }
+
+    // 短日期格式 MM/DD
+    _shortDate(dateStr) {
+        if (!dateStr) return '';
+        const [y, m, d] = dateStr.split('-').map(Number);
+        return `${m}/${d}`;
+    }
+
     parseDate(dateStr) {
         if (!dateStr) return null;
         const [y, m, d] = dateStr.split('-').map(Number);
@@ -579,6 +602,7 @@ class ProjectManager {
             newNode.endDate = '';
             newNode.archived = false;
             newNode.workdaysOnly = false;
+            newNode.phases = [];
         }
  
         parent.children = parent.children || [];
@@ -1162,24 +1186,36 @@ class ProjectManager {
             if (a.startOffset !== b.startOffset) return a.startOffset - b.startOffset;
             return (b.endOffset - b.startOffset) - (a.endOffset - a.startOffset);
         });
- 
-        // 贪心分配泳道
-        const lanes = []; // 每条泳道记录最后任务的 endOffset
-        const BAR_HEIGHT = 42;
+
+        // 贪心分配泳道；有任务阶段的任务条更高
+        const lanes = []; // 每条泳道记录 { endOffset, laneTop }
+        const BASE_BAR_HEIGHT = 42;
         const BAR_GAP = 4;
- 
+        let totalHeight = 0;
+
         for (const t of tasks) {
-            let laneIdx = lanes.findIndex(end => end < t.startOffset);
+            const hasPhases = !!(this._renderPhasesLine(t.task));
+            t.barHeight = hasPhases ? BASE_BAR_HEIGHT + 14 : BASE_BAR_HEIGHT;
+            let laneIdx = lanes.findIndex(l => l.endOffset < t.startOffset && l.height >= t.barHeight);
             if (laneIdx === -1) {
-                laneIdx = lanes.length;
-                lanes.push(t.endOffset);
+                // 找一个能容纳此高度的泳道，否则新建
+                laneIdx = lanes.findIndex(l => l.endOffset < t.startOffset);
+                if (laneIdx === -1) {
+                    laneIdx = lanes.length;
+                    lanes.push({ endOffset: t.endOffset, height: t.barHeight, top: totalHeight });
+                    totalHeight += t.barHeight + BAR_GAP;
+                } else {
+                    lanes[laneIdx].endOffset = t.endOffset;
+                    lanes[laneIdx].height = Math.max(lanes[laneIdx].height, t.barHeight);
+                }
             } else {
-                lanes[laneIdx] = t.endOffset;
+                lanes[laneIdx].endOffset = t.endOffset;
             }
             t.lane = laneIdx;
+            t.laneTop = lanes[laneIdx].top;
         }
- 
-        return { tasks, laneCount: lanes.length, BAR_HEIGHT, BAR_GAP };
+
+        return { tasks, laneCount: lanes.length, BAR_HEIGHT: BASE_BAR_HEIGHT, BAR_GAP, totalHeight };
     }
  
     toggleProjectFilter(projectId) {
@@ -1326,8 +1362,8 @@ class ProjectManager {
                 return tStart <= weekEnd && tEnd >= weekStartMidnight;
             });
  
-            const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
-            const weekHeight = Math.max(110, 40 + laneCount * (BAR_HEIGHT + BAR_GAP));
+            const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP, totalHeight } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
+            const weekHeight = Math.max(110, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
  
             const dayCells = week.map((d) => {
                 const isToday = this.isSameDay(d, today);
@@ -1350,13 +1386,15 @@ class ProjectManager {
             }).join('');
  
             const taskBars = layoutTasks.map(t => {
-                const top = t.lane * (BAR_HEIGHT + BAR_GAP);
+                const top = t.laneTop != null ? t.laneTop : t.lane * (BAR_HEIGHT + BAR_GAP);
+                const barH = t.barHeight || BAR_HEIGHT;
                 const c = t.stageColor;
                 const isArchived = t.task.archived;
                 const taskStart = this.parseDate(t.task.startDate);
                 const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
                 const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
                 const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
+                const phasesLine = this._renderPhasesLine(t.task);
 
                 // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
                 const segments = t.task.workdaysOnly
@@ -1368,9 +1406,10 @@ class ProjectManager {
                 return segments.map(seg => {
                     const left = (seg.startOffset / 7) * 100;
                     const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
-                    return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''}" data-event-id="${t.task.id}"
-                        style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
+                    return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${phasesLine ? 'has-phases' : ''}" data-event-id="${t.task.id}"
+                        style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                         <div class="bar-title">${nameWithDays}</div>
+                        ${phasesLine ? `<div class="bar-phases">${phasesLine}</div>` : ''}
                         <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
                         <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
                     </div>`;
@@ -1431,8 +1470,8 @@ class ProjectManager {
             return tStart <= weekEnd && tEnd >= weekStartMidnight;
         });
  
-        const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
-        const weekHeight = Math.max(220, 40 + laneCount * (BAR_HEIGHT + BAR_GAP));
+        const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP, totalHeight } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
+        const weekHeight = Math.max(220, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
  
         const filterTabs = this.renderProjectFilter(projects);
  
@@ -1462,13 +1501,15 @@ class ProjectManager {
         }).join('');
  
         const taskBars = layoutTasks.map(t => {
-            const top = t.lane * (BAR_HEIGHT + BAR_GAP);
+            const top = t.laneTop != null ? t.laneTop : t.lane * (BAR_HEIGHT + BAR_GAP);
+            const barH = t.barHeight || BAR_HEIGHT;
             const c = t.stageColor;
             const isArchived = t.task.archived;
             const taskStart = this.parseDate(t.task.startDate);
             const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
             const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
             const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
+            const phasesLine = this._renderPhasesLine(t.task);
 
             // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
             const segments = t.task.workdaysOnly
@@ -1480,9 +1521,10 @@ class ProjectManager {
             return segments.map(seg => {
                 const left = (seg.startOffset / 7) * 100;
                 const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
-                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''}" data-event-id="${t.task.id}"
-                    style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
+                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${phasesLine ? 'has-phases' : ''}" data-event-id="${t.task.id}"
+                    style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                     <div class="bar-title">${nameWithDays}</div>
+                    ${phasesLine ? `<div class="bar-phases">${phasesLine}</div>` : ''}
                     <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
                     <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
                 </div>`;
@@ -2343,7 +2385,6 @@ class ProjectManager {
         };
 
         document.getElementById('taskName').value = '';
-        document.getElementById('taskDescription').value = '';
         document.getElementById('taskStart').value = startDate || '';
         document.getElementById('taskEnd').value = endDate || '';
         document.getElementById('taskArchived').checked = false;
@@ -2356,15 +2397,25 @@ class ProjectManager {
         document.getElementById('taskProject').innerHTML = '<option value="">请选择</option>';
         document.getElementById('taskStage').innerHTML = '<option value="">请选择</option>';
 
+        // 任务阶段：默认清空，编辑时回填
+        const phasesContainer = document.getElementById('taskPhasesContainer');
+        phasesContainer.innerHTML = '';
+
         if (taskId) {
             const node = this.findNode(taskId);
             if (node) {
                 document.getElementById('taskName').value = node.name;
-                document.getElementById('taskDescription').value = node.description || '';
                 document.getElementById('taskStart').value = node.startDate || startDate || '';
                 document.getElementById('taskEnd').value = node.endDate || endDate || '';
                 document.getElementById('taskArchived').checked = node.archived || false;
                 document.getElementById('taskWorkdaysOnly').checked = node.workdaysOnly || false;
+                // 回填任务阶段
+                const phases = Array.isArray(node.phases) ? node.phases : [];
+                if (phases.length === 0) {
+                    this.addTaskPhaseRow(); // 默认给一个空行，便于录入
+                } else {
+                    phases.forEach(ph => this.addTaskPhaseRow(ph));
+                }
                 // 找到所属的 customer 和 project
                 const path = [];
                 const findPath = (nodes) => {
@@ -2397,11 +2448,67 @@ class ProjectManager {
                     }
                 }
             }
+        } else {
+            // 新建任务：默认给一个空阶段行
+            this.addTaskPhaseRow();
         }
- 
+
         document.getElementById('taskModal').classList.remove('hidden');
         document.getElementById('taskModal').classList.add('flex');
         setTimeout(() => document.getElementById('taskName').focus(), 100);
+    }
+
+    // 添加一行任务阶段（可选传入已有数据回填）
+    addTaskPhaseRow(phase = null) {
+        const container = document.getElementById('taskPhasesContainer');
+        const wrap = document.createElement('div');
+        wrap.className = 'task-phase-row';
+        const id = phase && phase.id ? phase.id : this.generateId();
+        wrap.dataset.phaseId = id;
+        const name = phase ? (phase.name || '') : '';
+        const start = phase ? (phase.startDate || '') : '';
+        const end = phase ? (phase.endDate || '') : '';
+        wrap.innerHTML = `
+            <div class="flex items-center gap-2">
+                <input type="text" class="phase-name-input flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="阶段名称" value="${name.replace(/"/g, '&quot;')}">
+                <input type="date" class="phase-start-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${start}">
+                <span class="text-gray-400 text-xs">~</span>
+                <input type="date" class="phase-end-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${end}">
+                <button type="button" onclick="app.removeTaskPhaseRow(this)" class="phase-remove-btn" title="删除该阶段">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                </button>
+            </div>
+        `;
+        container.appendChild(wrap);
+    }
+
+    removeTaskPhaseRow(btn) {
+        const wrap = btn.closest('.task-phase-row');
+        const container = document.getElementById('taskPhasesContainer');
+        if (wrap) wrap.remove();
+        // 至少保留一个空行，便于录入
+        if (container.children.length === 0) this.addTaskPhaseRow();
+    }
+
+    // 收集任务阶段数据
+    collectTaskPhases() {
+        const container = document.getElementById('taskPhasesContainer');
+        const rows = container.querySelectorAll('.task-phase-row');
+        const phases = [];
+        rows.forEach(row => {
+            const name = row.querySelector('.phase-name-input').value.trim();
+            const startDate = row.querySelector('.phase-start-input').value;
+            const endDate = row.querySelector('.phase-end-input').value;
+            // 跳过完全空的行
+            if (!name && !startDate && !endDate) return;
+            phases.push({
+                id: row.dataset.phaseId,
+                name,
+                startDate,
+                endDate
+            });
+        });
+        return phases;
     }
  
     closeTaskModal() {
@@ -2412,7 +2519,6 @@ class ProjectManager {
  
     saveTaskModal() {
         const name = document.getElementById('taskName').value.trim();
-        const description = document.getElementById('taskDescription').value.trim();
         const customerId = document.getElementById('taskCustomer').value;
         const projectId = document.getElementById('taskProject').value;
         const stageId = document.getElementById('taskStage').value;
@@ -2420,22 +2526,23 @@ class ProjectManager {
         const endDate = document.getElementById('taskEnd').value;
         const archived = document.getElementById('taskArchived').checked;
         const workdaysOnly = document.getElementById('taskWorkdaysOnly').checked;
- 
+        const phases = this.collectTaskPhases();
+
         if (!name) { alert('请输入任务名称'); return; }
         if (!customerId) { alert('请选择品牌'); return; }
         if (!projectId) { alert('请选择项目'); return; }
         if (!stageId) { alert('请选择环节'); return; }
- 
+
         if (this._taskModalData.taskId) {
             // 编辑现有任务
             const task = this.findNode(this._taskModalData.taskId);
             if (task) {
                 task.name = name;
-                task.description = description;
                 task.startDate = startDate;
                 task.endDate = endDate;
                 task.archived = archived;
                 task.workdaysOnly = workdaysOnly;
+                task.phases = phases;
  
                 // 如果关联的环节改变了，需要移动节点
                 const oldStage = this.findParent(task.id);
@@ -2456,11 +2563,11 @@ class ProjectManager {
                 id: this.generateId(),
                 type: 'task',
                 name,
-                description,
                 startDate,
                 endDate,
                 archived: archived || false,
                 workdaysOnly: workdaysOnly || false,
+                phases: phases,
                 children: []
             };
             const stage = this.findNode(stageId);
