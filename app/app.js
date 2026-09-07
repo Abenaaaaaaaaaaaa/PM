@@ -1225,31 +1225,35 @@ class ProjectManager {
         });
 
         // 贪心分配泳道；有任务阶段的任务条更高
-        const lanes = []; // 每条泳道记录 { endOffset, laneTop }
         const BASE_BAR_HEIGHT = 42;
         const BAR_GAP = 4;
-        let totalHeight = 0;
+        const lanes = []; // { endOffset, maxHeight }
 
+        // 第一遍：贪心分配泳道，记录每条泳道的最大高度
         for (const t of tasks) {
-            const hasPhases = !!(this._renderPhasesLine(t.task));
+            const hasPhases = !!(t.task.phases && t.task.phases.some(p => p.name));
             t.barHeight = hasPhases ? BASE_BAR_HEIGHT + 14 : BASE_BAR_HEIGHT;
-            let laneIdx = lanes.findIndex(l => l.endOffset < t.startOffset && l.height >= t.barHeight);
+            // 找第一条结束时间早于此任务开始的泳道放入
+            let laneIdx = lanes.findIndex(l => l.endOffset < t.startOffset);
             if (laneIdx === -1) {
-                // 找一个能容纳此高度的泳道，否则新建
-                laneIdx = lanes.findIndex(l => l.endOffset < t.startOffset);
-                if (laneIdx === -1) {
-                    laneIdx = lanes.length;
-                    lanes.push({ endOffset: t.endOffset, height: t.barHeight, top: totalHeight });
-                    totalHeight += t.barHeight + BAR_GAP;
-                } else {
-                    lanes[laneIdx].endOffset = t.endOffset;
-                    lanes[laneIdx].height = Math.max(lanes[laneIdx].height, t.barHeight);
-                }
+                laneIdx = lanes.length;
+                lanes.push({ endOffset: t.endOffset, maxHeight: t.barHeight });
             } else {
                 lanes[laneIdx].endOffset = t.endOffset;
+                lanes[laneIdx].maxHeight = Math.max(lanes[laneIdx].maxHeight, t.barHeight);
             }
             t.lane = laneIdx;
-            t.laneTop = lanes[laneIdx].top;
+        }
+
+        // 第二遍：按泳道实际最大高度累加计算每条泳道的 top（解决高条覆盖下方泳道的问题）
+        let totalHeight = 0;
+        for (let i = 0; i < lanes.length; i++) {
+            lanes[i].top = totalHeight;
+            totalHeight += lanes[i].maxHeight + BAR_GAP;
+        }
+        // 回填每个任务的 laneTop
+        for (const t of tasks) {
+            t.laneTop = lanes[t.lane].top;
         }
 
         return { tasks, laneCount: lanes.length, BAR_HEIGHT: BASE_BAR_HEIGHT, BAR_GAP, totalHeight };
