@@ -26,7 +26,7 @@ class ProjectManager {
         this.searchKeyword = '';        // 全局搜索关键词
         this.tableCollapsed = new Set(); // 表格视图中折叠的节点ID
         this.archiveSearchKeyword = '';  // 归档搜索关键词
-        this.archiveSortBy = 'endDate';  // 归档排序字段
+        this.archiveSortBy = 'archivedAt';  // 归档排序字段（默认按归档时间）
         this.favProjectIds = new Set(); // 常用项目快捷按钮
  
         // 颜色池，用于日历事件
@@ -292,11 +292,195 @@ class ProjectManager {
         }
         this.renderAll();
     }
+
+    confirmDeleteNode(id, type = '节点') {
+        const node = this.findNode(id);
+        if (!node) return;
+        // 收集会被连带删除的子节点数量，便于提示
+        let childCount = 0;
+        if (node.children) {
+            const count = (nodes) => nodes.forEach(n => { childCount++; if (n.children) count(n.children); });
+            count(node.children);
+        }
+        const extra = childCount > 0 ? `\n注意：该${type}下有 ${childCount} 个子节点将一并删除。` : '';
+        if (!confirm(`确定删除${type}「${node.name}」吗？${extra}`)) return;
+        this.deleteNode(id);
+        // 如果删除的是当前正在编辑的任务弹窗中的任务，关闭弹窗
+        if (this._taskModalData && this._taskModalData.taskId === id) {
+            this.closeTaskModal();
+        }
+    }
+
+    // 从任务弹窗中删除当前任务
+    deleteTaskFromModal() {
+        if (!this._taskModalData || !this._taskModalData.taskId) {
+            alert('新建任务不可删除');
+            return;
+        }
+        const taskId = this._taskModalData.taskId;
+        const node = this.findNode(taskId);
+        if (!node) return;
+        if (!confirm(`确定删除任务「${node.name}」吗？`)) return;
+        this.closeTaskModal();
+        this.deleteNode(taskId);
+    }
+
+    // ---------- 项目隐藏 / 恢复 ----------
+
+    // 隐藏项目（移动到隐藏栏）
+    hideProject(projectId) {
+        const project = this.findNode(projectId);
+        if (!project || project.type !== 'project') return;
+        project.hidden = true;
+        project.hiddenAt = new Date().toISOString();
+        this.renderAll();
+    }
+
+    // 恢复隐藏的项目（从隐藏栏移回主列表）
+    restoreProject(projectId) {
+        const project = this.findNode(projectId);
+        if (!project || project.type !== 'project') return;
+        project.hidden = false;
+        project.hiddenAt = null;
+        this.renderAll();
+    }
+
+    // 在隐藏栏中展开/折叠某个项目
+    toggleHiddenProject(projectId) {
+        if (this._hiddenExpanded && this._hiddenExpanded.has(projectId)) {
+            this._hiddenExpanded.delete(projectId);
+        } else {
+            this._hiddenExpanded = this._hiddenExpanded || new Set();
+            this._hiddenExpanded.add(projectId);
+        }
+        this.renderMain();
+    }
+
+    // 收集所有被隐藏的项目（带客户名等上下文）
+    getHiddenProjects() {
+        const list = [];
+        const walk = (nodes, customer = null) => {
+            nodes.forEach(node => {
+                if (node.type === 'customer') {
+                    walk(node.children || [], node);
+                } else if (node.type === 'project') {
+                    if (node.hidden) {
+                        list.push({
+                            id: node.id,
+                            name: node.name,
+                            startDate: node.startDate || '',
+                            endDate: node.endDate || '',
+                            description: node.description || '',
+                            hiddenAt: node.hiddenAt || null,
+                            customerName: customer?.name || '-',
+                            customerId: customer?.id || '',
+                            stages: node.children || []
+                        });
+                    }
+                }
+            });
+        };
+        walk(this.data);
+        // 按隐藏时间倒序（最近隐藏的在前）
+        list.sort((a, b) => (b.hiddenAt || '').localeCompare(a.hiddenAt || ''));
+        return list;
+    }
+
+    // 渲染隐藏栏 HTML（固定在页面底部，仅在列表视图显示）
+    renderHiddenBar() {
+        const hidden = this.getHiddenProjects();
+        const count = hidden.length;
+        const hasContent = count > 0;
+
+        const collapsed = this._hiddenBarCollapsed ? true : false;
+
+        const items = hidden.map(p => {
+            const expanded = (this._hiddenExpanded && this._hiddenExpanded.has(p.id)) || false;
+            const stageRows = [];
+            if (expanded) {
+                const stages = (p.stages || []).filter(s => s.type === 'stage');
+                if (stages.length === 0) {
+                    stageRows.push(`<div class="text-xs text-gray-400 py-2">该暂无环节</div>`);
+                } else {
+                    stages.forEach(s => {
+                        const tasks = (s.children || []).filter(t => t.type === 'task');
+                        const taskList = tasks.length === 0
+                            ? `<span class="text-xs text-gray-400">（无任务）</span>`
+                            : tasks.map(t => `
+                                <div class="hidden-task-row">
+                                    <span class="font-medium text-pink-700">${t.name}</span>
+                                    <span class="text-xs text-gray-400">${t.startDate || '-'} ~ ${t.endDate || '-'}</span>
+                                    ${t.archived ? `<span class="text-xs text-gray-400">（已归档）</span>` : ''}
+                                </div>
+                            `).join('');
+                        stageRows.push(`
+                            <div class="hidden-stage-row">
+                                <div class="flex items-center gap-2">
+                                    <div class="stage-color-dot-table" style="background:${s.color || '#94a3b8'};width:12px;height:12px;border-radius:50%;flex-shrink:0;border:2px solid white;box-shadow:0 0 0 1px ${s.color || '#94a3b8'}"></div>
+                                    <span style="color:${s.color || '#94a3b8'};font-weight:600">${s.name}</span>
+                                    <span class="text-xs text-gray-400">${tasks.length} 个任务</span>
+                                </div>
+                                <div class="ml-5 mt-1 space-y-1">${taskList}</div>
+                            </div>
+                        `);
+                    });
+                }
+            }
+            return `
+                <div class="hidden-project-card" data-project-id="${p.id}">
+                    <div class="hidden-project-head" onclick="app.toggleHiddenProject('${p.id}')">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 4.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L10.586 9 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+                            <span class="font-medium text-gray-700 truncate">${p.name}</span>
+                            <span class="text-xs text-gray-400 flex-shrink-0">${p.customerName}</span>
+                            <span class="text-xs text-gray-400 flex-shrink-0">${p.startDate || ''} ~ ${p.endDate || ''}</span>
+                        </div>
+                        <div class="flex items-center gap-3 flex-shrink-0">
+                            <span class="text-xs text-gray-400" title="隐藏时间">隐藏于 ${this.formatDateTime(p.hiddenAt)}</span>
+                            <button onclick="event.stopPropagation();app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑</button>
+                            <button onclick="event.stopPropagation();app.restoreProject('${p.id}')" class="text-green-600 hover:text-green-700 text-xs font-medium">恢复</button>
+                        </div>
+                    </div>
+                    ${expanded ? `<div class="hidden-project-body">${stageRows.join('')}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div id="hiddenBar" class="hidden-bar ${collapsed ? 'collapsed' : ''}">
+                <div class="hidden-bar-head" onclick="app.toggleHiddenBar()">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-gray-500 transition-transform ${collapsed ? '' : 'rotate-180'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        <span class="font-semibold text-gray-700">隐藏栏</span>
+                        <span class="text-xs text-gray-400">（${count} 个项目 · 吸附底部，不随页面滚动）</span>
+                    </div>
+                    ${!collapsed && hasContent ? `<span class="text-xs text-gray-400">点击折叠</span>` : ''}
+                </div>
+                ${!collapsed ? `
+                    <div class="hidden-bar-body">
+                        ${hasContent ? items : `<div class="text-sm text-gray-400 py-4 text-center">暂无被隐藏的项目</div>`}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    // 折叠/展开隐藏栏
+    toggleHiddenBar() {
+        this._hiddenBarCollapsed = !this._hiddenBarCollapsed;
+        this.renderMain();
+    }
  
     toggleTaskArchived(taskId) {
         const task = this.findNode(taskId);
         if (task && task.type === 'task') {
             task.archived = !task.archived;
+            // 归档时记录归档时间，取消归档时清除
+            if (task.archived) {
+                task.archivedAt = new Date().toISOString();
+            } else {
+                task.archivedAt = null;
+            }
             this.renderAll();
         }
     }
@@ -313,6 +497,15 @@ class ProjectManager {
         if (!dateStr) return '-';
         const d = new Date(dateStr);
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    // 格式化日期时间（用于归档时间、隐藏时间等时间戳显示）
+    formatDateTime(dateStr) {
+        if (!dateStr) return '-';
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '-';
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
  
     isSameDay(d1, d2) {
@@ -662,12 +855,16 @@ class ProjectManager {
         if (this.view === 'table') {
             container.innerHTML = this.renderTableView();
             this.initTableInteractions();
+            // 列表视图底部有固定隐藏栏，需留白避免遮挡
+            container.classList.add('has-hidden-bar');
         } else if (this.view === 'archive') {
             container.innerHTML = this.renderArchiveView();
             this.initArchiveInteractions();
+            container.classList.remove('has-hidden-bar');
         } else {
             container.innerHTML = this.renderCalendarView();
             this.initCalendarInteractions();
+            container.classList.remove('has-hidden-bar');
         }
 
         // 恢复滚动位置
@@ -917,6 +1114,8 @@ class ProjectManager {
         const groups = [];
         const walk = (nodes, path = []) => {
             nodes.forEach(node => {
+                // 隐藏的项目不显示在主列表中（已移至隐藏栏）
+                if (node.type === 'project' && node.hidden) return;
                 const newPath = [...path, node];
                 if (node.type === 'task') {
                     // 搜索过滤
@@ -982,7 +1181,7 @@ class ProjectManager {
             // 客户分组头
             rows.push(`
                 <tr class="group-header" data-customer="${c.id}">
-                    <td colspan="6" class="bg-blue-50/80 border-l-4 border-blue-500 py-2 px-4">
+                    <td colspan="7" class="bg-blue-50/80 border-l-4 border-blue-500 py-2 px-4">
                         <div class="flex items-center gap-2">
                             <button onclick="app.toggleTableCollapse('${c.id}')" class="text-blue-600 hover:text-blue-800 flex-shrink-0">${collapseIcon(cCollapsed)}</button>
                             <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
@@ -999,12 +1198,15 @@ class ProjectManager {
                     let pTaskCount = 0;
                     p.stages.forEach(s => pTaskCount += s.tasks.length);
  
-                    // 项目分组头
+                    // 项目分组头（支持拖拽排序）
                     rows.push(`
-                        <tr class="group-header" data-customer="${c.id}" data-project="${p.id}">
-                            <td colspan="6" class="bg-green-50/60 border-l-4 border-green-500 py-2 pl-10 pr-4">
+                        <tr class="group-header project-header-row" data-customer="${c.id}" data-project="${p.id}" draggable="true">
+                            <td colspan="7" class="bg-green-50/60 border-l-4 border-green-500 py-2 pl-10 pr-4">
                                 <div class="flex items-center justify-between">
                                     <div class="flex items-center gap-2">
+                                        <span class="project-drag-handle" title="拖拽项目排序">
+                                            <svg class="w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a1 1 0 100 2 1 1 0 000-2zM7 9a1 1 0 100 2 1 1 0 000-2zM7 14a1 1 0 100 2 1 1 0 000-2zM13 4a1 1 0 100 2 1 1 0 000-2zM13 9a1 1 0 100 2 1 1 0 000-2zM13 14a1 1 0 100 2 1 1 0 000-2z"></path></svg>
+                                        </span>
                                         <button onclick="app.toggleTableCollapse('${p.id}')" class="text-green-600 hover:text-green-800 flex-shrink-0">${collapseIcon(pCollapsed)}</button>
                                         <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
                                         <span class="font-medium text-green-800">${p.name}</span>
@@ -1013,6 +1215,8 @@ class ProjectManager {
                                     </div>
                                     <div class="flex items-center gap-3">
                                         <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑项目信息</button>
+                                        <button onclick="app.hideProject('${p.id}')" class="text-gray-500 hover:text-gray-700 text-xs font-medium">隐藏</button>
+                                        <button onclick="app.confirmDeleteNode('${p.id}', '项目')" class="text-red-500 hover:text-red-700 text-xs font-medium">删除</button>
                                     </div>
                                 </div>
                             </td>
@@ -1053,6 +1257,9 @@ class ProjectManager {
                                         <td class="align-middle">
                                             <button onclick="app.openTaskModal(null, null, '${t.id}')" class="text-green-600 hover:text-green-700 text-xs font-medium">编辑任务</button>
                                         </td>
+                                        <td class="align-middle">
+                                            <button onclick="app.confirmDeleteNode('${t.id}', '任务')" class="text-red-500 hover:text-red-700 text-xs font-medium">删除</button>
+                                        </td>
                                     </tr>
                                 `);
                             });
@@ -1078,7 +1285,7 @@ class ProjectManager {
                 <div class="overflow-x-auto">
                     <table class="data-table" id="dataTable">
                         <colgroup>
-                            <col style="width:140px"><col style="width:auto"><col style="width:120px"><col style="width:120px"><col style="width:90px"><col style="width:80px">
+                            <col style="width:140px"><col style="width:auto"><col style="width:120px"><col style="width:120px"><col style="width:90px"><col style="width:80px"><col style="width:70px">
                         </colgroup>
                         <thead>
                             <tr>
@@ -1088,14 +1295,16 @@ class ProjectManager {
                                 <th>结束时间<div class="col-resizer"></div></th>
                                 <th>状态</th>
                                 <th>操作</th>
+                                <th>删除</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${rows.length === 0 ? `<tr><td colspan="6" class="text-center text-gray-400 py-12">${this.searchKeyword ? '没有找到匹配的任务' : '暂无任务'}</td></tr>` : rows.join('')}
+                            ${rows.length === 0 ? `<tr><td colspan="7" class="text-center text-gray-400 py-12">${this.searchKeyword ? '没有找到匹配的任务' : '暂无任务'}</td></tr>` : rows.join('')}
                         </tbody>
                     </table>
                 </div>
             </div>
+            ${this.renderHiddenBar()}
         `;
     }
  
@@ -1638,7 +1847,8 @@ class ProjectManager {
                         stage: stage?.name || '-',
                         stageColor: stage?.color || '#94a3b8',
                         startDate: node.startDate || '-',
-                        endDate: node.endDate || '-'
+                        endDate: node.endDate || '-',
+                        archivedAt: node.archivedAt || null
                     });
                 }
                 if (node.children?.length) {
@@ -1665,6 +1875,8 @@ class ProjectManager {
                 return (b.endDate || '').localeCompare(a.endDate || '');
             } else if (this.archiveSortBy === 'startDate') {
                 return (b.startDate || '').localeCompare(a.startDate || '');
+            } else if (this.archiveSortBy === 'archivedAt') {
+                return (b.archivedAt || '').localeCompare(a.archivedAt || '');
             } else if (this.archiveSortBy === 'task') {
                 return a.task.localeCompare(b.task, 'zh');
             } else if (this.archiveSortBy === 'customer') {
@@ -1683,6 +1895,7 @@ class ProjectManager {
                     <div class="flex items-center gap-3">
                         <input type="text" id="archiveSearchInput" value="${this.archiveSearchKeyword}" oninput="app.onArchiveSearchInput(this.value)" placeholder="搜索归档任务..." class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-48">
                         <select id="archiveSortSelect" onchange="app.setArchiveSort(this.value)" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                            <option value="archivedAt" ${this.archiveSortBy === 'archivedAt' ? 'selected' : ''}>按归档时间</option>
                             <option value="endDate" ${this.archiveSortBy === 'endDate' ? 'selected' : ''}>按结束时间</option>
                             <option value="startDate" ${this.archiveSortBy === 'startDate' ? 'selected' : ''}>按开始时间</option>
                             <option value="task" ${this.archiveSortBy === 'task' ? 'selected' : ''}>按任务名</option>
@@ -1694,7 +1907,7 @@ class ProjectManager {
                 <div class="overflow-x-auto">
                     <table class="data-table" id="archiveTable">
                         <colgroup>
-                            <col style="width:40px"><col style="width:120px"><col style="width:140px"><col style="width:120px"><col style="width:200px"><col style="width:120px"><col style="width:120px"><col style="width:100px">
+                            <col style="width:40px"><col style="width:120px"><col style="width:140px"><col style="width:120px"><col style="width:200px"><col style="width:110px"><col style="width:110px"><col style="width:140px"><col style="width:100px">
                         </colgroup>
                         <thead>
                             <tr>
@@ -1705,13 +1918,14 @@ class ProjectManager {
                                 <th>任务</th>
                                 <th>开始时间</th>
                                 <th>结束时间</th>
+                                <th>归档时间</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${filtered.length === 0 ? `
                                 <tr>
-                                    <td colspan="8" class="text-center text-gray-400 py-12">${this.archiveSearchKeyword ? '没有找到匹配的归档任务' : '暂无已归档任务'}</td>
+                                    <td colspan="9" class="text-center text-gray-400 py-12">${this.archiveSearchKeyword ? '没有找到匹配的归档任务' : '暂无已归档任务'}</td>
                                 </tr>
                             ` : filtered.map(row => `
                                 <tr>
@@ -1727,6 +1941,7 @@ class ProjectManager {
                                     <td class="font-medium text-pink-700">${row.task}</td>
                                     <td>${row.startDate}</td>
                                     <td>${row.endDate}</td>
+                                    <td class="text-gray-500 text-xs">${this.formatDateTime(row.archivedAt)}</td>
                                     <td>
                                         <button onclick="app.toggleTaskArchived('${row.taskId}')" class="text-blue-600 hover:text-blue-700 text-sm font-medium">恢复</button>
                                     </td>
@@ -1772,6 +1987,7 @@ class ProjectManager {
             const task = this.findNode(id);
             if (task && task.type === 'task') {
                 task.archived = false;
+                task.archivedAt = null;
             }
         });
         this.renderAll();
@@ -2106,6 +2322,111 @@ class ProjectManager {
 
         // 2.0 行拖拽排序
         this.initRowDragSort(table);
+        // 项目分组头拖拽排序
+        this.initProjectDragSort(table);
+    }
+
+    // 项目拖拽排序（仅同一客户下的项目可互相排序）
+    initProjectDragSort(table) {
+        const projectRows = table.querySelectorAll('.project-header-row');
+        if (projectRows.length === 0) return;
+
+        let dragSrcRow = null;
+        let dragSrcProjectId = null;
+        let dragSrcCustomerId = null;
+
+        projectRows.forEach(row => {
+            // dragstart
+            row.addEventListener('dragstart', (e) => {
+                // 从按钮、可编辑单元格发起时取消拖拽
+                if (e.target.closest('button') || e.target.closest('.editable-cell')) {
+                    e.preventDefault();
+                    return;
+                }
+                dragSrcRow = row;
+                dragSrcProjectId = row.dataset.project;
+                dragSrcCustomerId = row.dataset.customer;
+                row.classList.add('dragging-row');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', dragSrcProjectId);
+            });
+
+            // dragend
+            row.addEventListener('dragend', () => {
+                row.classList.remove('dragging-row');
+                table.querySelectorAll('.project-header-row.drag-over-top, .project-header-row.drag-over-bottom').forEach(r => {
+                    r.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+                dragSrcRow = null;
+                dragSrcProjectId = null;
+                dragSrcCustomerId = null;
+            });
+
+            // dragover
+            row.addEventListener('dragover', (e) => {
+                if (!dragSrcRow || row === dragSrcRow) return;
+                // 仅同一客户下的项目可排序
+                if (row.dataset.customer !== dragSrcCustomerId) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+                if (e.clientY < midY) {
+                    row.classList.add('drag-over-top');
+                } else {
+                    row.classList.add('drag-over-bottom');
+                }
+            });
+
+            // dragleave
+            row.addEventListener('dragleave', () => {
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+            });
+
+            // drop
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (!dragSrcProjectId || !dragSrcCustomerId) return;
+                const targetProjectId = row.dataset.project;
+                const targetCustomerId = row.dataset.customer;
+                if (targetProjectId === dragSrcProjectId) return;
+                // 仅同一客户可排序
+                if (targetCustomerId !== dragSrcCustomerId) return;
+
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                const insertBefore = e.clientY < midY;
+
+                this.moveProject(dragSrcProjectId, targetProjectId, insertBefore);
+            });
+        });
+    }
+
+    // 移动项目到新位置（同一客户内重排）
+    moveProject(srcProjectId, targetProjectId, insertBefore) {
+        const srcProject = this.findNode(srcProjectId);
+        const targetProject = this.findNode(targetProjectId);
+        if (!srcProject || !targetProject) return;
+
+        const customer = this.findParent(srcProjectId);
+        if (!customer || customer.id !== this.findParent(targetProjectId)?.id) return;
+        if (!customer.children) return;
+
+        // 从原位置移除
+        customer.children = customer.children.filter(c => c.id !== srcProjectId);
+
+        // 找到目标位置并插入
+        const targetIdx = customer.children.findIndex(c => c.id === targetProjectId);
+        if (targetIdx === -1) {
+            customer.children.push(srcProject);
+        } else {
+            const insertIdx = insertBefore ? targetIdx : targetIdx + 1;
+            customer.children.splice(insertIdx, 0, srcProject);
+        }
+
+        this.renderAll();
     }
 
     // 2.0 行拖拽排序
@@ -2448,6 +2769,14 @@ class ProjectManager {
         // 设置标题
         document.getElementById('taskModalTitle').textContent = taskId ? '编辑任务' : '新建任务';
 
+        // 编辑任务时显示删除按钮，新建任务时隐藏
+        const deleteBtn = document.getElementById('taskModalDeleteBtn');
+        if (taskId) {
+            deleteBtn.classList.remove('hidden');
+        } else {
+            deleteBtn.classList.add('hidden');
+        }
+
         this.populateCustomerOptions();
         document.getElementById('taskProject').innerHTML = '<option value="">请选择</option>';
         document.getElementById('taskStage').innerHTML = '<option value="">请选择</option>';
@@ -2592,6 +2921,12 @@ class ProjectManager {
             // 编辑现有任务
             const task = this.findNode(this._taskModalData.taskId);
             if (task) {
+                // 归档状态变化时同步 archivedAt
+                if (archived && !task.archived) {
+                    task.archivedAt = new Date().toISOString();
+                } else if (!archived && task.archived) {
+                    task.archivedAt = null;
+                }
                 task.name = name;
                 task.startDate = startDate;
                 task.endDate = endDate;
@@ -2621,6 +2956,7 @@ class ProjectManager {
                 startDate,
                 endDate,
                 archived: archived || false,
+                archivedAt: archived ? new Date().toISOString() : null,
                 workdaysOnly: workdaysOnly || false,
                 phases: phases,
                 children: []
