@@ -28,6 +28,7 @@ class ProjectManager {
         this.archiveSearchKeyword = '';  // 归档搜索关键词
         this.archiveSortBy = 'archivedAt';  // 归档排序字段（默认按归档时间）
         this.favProjectIds = new Set(); // 常用项目快捷按钮
+        this._hiddenBarCollapsed = true; // 隐藏栏默认收起
  
         // 颜色池，用于日历事件
         this.colors = [
@@ -636,7 +637,9 @@ class ProjectManager {
                 const s = p.startDate ? this._shortDate(p.startDate) : '';
                 const e = p.endDate ? this._shortDate(p.endDate) : '';
                 const range = (s || e) ? ` ${s}${e ? '~' + e : ''}` : '';
-                return `<span class="phase-chip">${p.name}${range}</span>`;
+                const doneCls = p.done ? ' phase-done-chip' : '';
+                const doneTag = p.done ? '<span class="phase-done-mark">✓</span>' : '';
+                return `<span class="phase-chip${doneCls}">${p.name}${range}${doneTag}</span>`;
             })
             .filter(html => html);
         return parts.length ? parts.join('<span class="phase-sep">·</span>') : '';
@@ -831,7 +834,7 @@ class ProjectManager {
             newNode.startDate = '';
             newNode.endDate = '';
             newNode.archived = false;
-            newNode.workdaysOnly = false;
+            newNode.workdaysOnly = true;
             newNode.phases = [];
         }
  
@@ -1661,7 +1664,8 @@ class ProjectManager {
                         ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
                         : [];
                     const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
-                        return `<div class="phase-mini-bar" style="left:${p.left}%;width:${p.width}%;background:${isArchived ? '#cbd5e1' : c};color:${isArchived ? '#64748b' : '#fff'}" title="${p.phase.name}">${p.phase.name}</div>`;
+                        const phDone = p.phase.done === true;
+                        return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
                     }).join('')}</div>` : '';
                     return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
                         style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
@@ -1783,7 +1787,8 @@ class ProjectManager {
                     ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
                     : [];
                 const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
-                    return `<div class="phase-mini-bar" style="left:${p.left}%;width:${p.width}%;background:${isArchived ? '#cbd5e1' : c};color:${isArchived ? '#64748b' : '#fff'}" title="${p.phase.name}">${p.phase.name}</div>`;
+                    const phDone = p.phase.done === true;
+                    return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
                 }).join('')}</div>` : '';
                 return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
                     style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
@@ -2835,6 +2840,8 @@ class ProjectManager {
         } else {
             // 新建任务：默认给一个空阶段行
             this.addTaskPhaseRow();
+            // 默认勾选「仅工作日执行」
+            document.getElementById('taskWorkdaysOnly').checked = true;
         }
 
         document.getElementById('taskModal').classList.remove('hidden');
@@ -2852,12 +2859,17 @@ class ProjectManager {
         const name = phase ? (phase.name || '') : '';
         const start = phase ? (phase.startDate || '') : '';
         const end = phase ? (phase.endDate || '') : '';
+        const done = phase ? (phase.done || false) : false;
         wrap.innerHTML = `
             <div class="flex items-center gap-2">
                 <input type="text" class="phase-name-input flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="阶段名称" value="${name.replace(/"/g, '&quot;')}">
                 <input type="date" class="phase-start-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${start}">
                 <span class="text-gray-400 text-xs">~</span>
                 <input type="date" class="phase-end-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${end}">
+                <label class="phase-done-label" title="标记该阶段为已完成">
+                    <input type="checkbox" class="phase-done-input" ${done ? 'checked' : ''}>
+                    <span class="phase-done-text">Done</span>
+                </label>
                 <button type="button" onclick="app.removeTaskPhaseRow(this)" class="phase-remove-btn" title="删除该阶段">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                 </button>
@@ -2883,13 +2895,16 @@ class ProjectManager {
             const name = row.querySelector('.phase-name-input').value.trim();
             const startDate = row.querySelector('.phase-start-input').value;
             const endDate = row.querySelector('.phase-end-input').value;
+            const doneEl = row.querySelector('.phase-done-input');
+            const done = doneEl ? doneEl.checked : false;
             // 跳过完全空的行
             if (!name && !startDate && !endDate) return;
             phases.push({
                 id: row.dataset.phaseId,
                 name,
                 startDate,
-                endDate
+                endDate,
+                done
             });
         });
         return phases;
