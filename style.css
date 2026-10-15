@@ -1338,24 +1338,34 @@ body { -webkit-tap-highlight-color: transparent; }
     /* ===== 日历视图 ===== */
     #mainContent .calendar-nav {
         flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 10px;
+        gap: 6px;
+        margin-bottom: 8px;
     }
-    .calendar-nav-btn { padding: 8px 14px; font-size: 13px; }
+    .calendar-nav-btn { padding: 5px 9px; font-size: 12px; }
     .calendar-title {
-        font-size: 15px;
+        font-size: 14px;
         min-width: 0;
         text-align: left;
         flex: 1 1 auto;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     .calendar-nav .text-xs { display: none; }
-    .calendar-nav > .ml-auto { margin-left: 0 !important; width: 100%; }
-    .calendar-nav > .ml-auto button { width: 100%; justify-content: center; }
+    /* 新增任务按钮收为图标按钮，内联到导航行，不独占一整行，把纵向空间让给月历网格 */
+    .calendar-nav > .ml-auto { margin-left: 0 !important; width: auto; flex: 0 0 auto; }
+    .calendar-nav > .ml-auto button {
+        width: auto;
+        justify-content: center;
+        padding: 5px 8px;
+        font-size: 0; /* 隐藏文字，仅保留 + 图标 */
+    }
+    .calendar-nav > .ml-auto button svg { width: 16px; height: 16px; }
     .calendar-header-cell { padding: 6px 2px; font-size: 11px; }
     .calendar-month-label { padding: 6px 10px; font-size: 12px; }
     .calendar-scroll-area {
-        max-height: calc(100vh - 290px);
-        max-height: calc(100dvh - 290px);
+        max-height: calc(100vh - 180px);
+        max-height: calc(100dvh - 180px);
     }
     .calendar-week-row { min-height: 80px; }
     .calendar-day { min-height: 80px; padding: 3px 2px; }
@@ -1375,11 +1385,12 @@ body { -webkit-tap-highlight-color: transparent; }
     .day-bar-item .bar-meta { display: none; }
     .day-bar-item .phase-mini-bar { height: 12px; line-height: 12px; font-size: 8px; }
     .day-bar-item .bar-resize-handle { width: 10px; }
-    /* 项目筛选栏 */
-    .project-filter-bar { gap: 8px; margin-bottom: 10px; }
-    .project-multiselect-wrapper { flex: 1 1 100%; min-width: 0; }
-    .project-multiselect-label { max-width: none; }
-    .project-fav-btn, .project-fav-chip { padding: 7px 12px; }
+    /* 项目筛选栏：下拉触发器收窄为图标按钮，常用 chip 同行显示以节省纵向空间 */
+    .project-filter-bar { gap: 6px; margin-bottom: 8px; }
+    .project-multiselect-wrapper { flex: 0 0 auto; min-width: 0; }
+    .project-multiselect-label { display: none; }
+    .project-multiselect-trigger { padding: 7px 8px; justify-content: center; }
+    .project-fav-btn, .project-fav-chip { padding: 6px 10px; font-size: 12px; }
 
     /* ===== 隐藏栏 ===== */
     .hidden-bar { max-height: 60vh; }
@@ -1436,8 +1447,8 @@ body { -webkit-tap-highlight-color: transparent; }
     header { padding: 8px 10px !important; }
     header h1 { font-size: 14px !important; }
     .calendar-scroll-area {
-        max-height: calc(100vh - 300px);
-        max-height: calc(100dvh - 300px);
+        max-height: calc(100vh - 190px);
+        max-height: calc(100dvh - 190px);
     }
     #mainContent { padding: 8px !important; }
 }

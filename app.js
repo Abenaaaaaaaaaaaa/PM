@@ -2783,8 +2783,8 @@ class ProjectManager {
                 const node = this.findNode(eventId);
                 if (!node) return;
 
-                // 记录起点
-                this._pdStart = { x: e.clientX, y: e.clientY, moved: false };
+                // 记录起点（含按下时间，用于抑制滑动起始阶段的误触拖拽）
+                this._pdStart = { x: e.clientX, y: e.clientY, moved: false, time: Date.now() };
                 if (resizeHandle) {
                     // 拖拽右边缘改时长：直接进入 resize 状态
                     this._resizingEvent = { id: eventId, startX: e.clientX, origEndDate: node.endDate || node.startDate };
@@ -2820,10 +2820,12 @@ class ProjectManager {
                     const dy = e.clientY - this._pdStart.y;
                     const absDx = Math.abs(dx);
                     const absDy = Math.abs(dy);
-                    // 阈值 12px（比之前的 6px 更宽松，避免手指抖动误触）
-                    if (absDx <= 12 && absDy <= 12) return;
-                    // 纵向位移为主 → 放行给浏览器滚动（切换月份/页面滚动）
-                    if (absDy > absDx) {
+                    // 按下后短时间内不判定拖拽，让浏览器先识别纵向滚动手势
+                    if (Date.now() - this._pdStart.time < 50) return;
+                    // 阈值 20px（比手指抖动幅度更大，避免误触）
+                    if (absDx <= 20 && absDy <= 20) return;
+                    // 横向位移必须明显大于纵向（2 倍以上）才启动拖拽，否则放行给浏览器纵向滚动
+                    if (absDx <= absDy * 2) {
                         this._dragPending = false;
                         this._pendingDragId = null;
                         this._pdStart = null;
@@ -2844,14 +2846,16 @@ class ProjectManager {
                 this._updateCalendarDrag(e.clientX, e.clientY);
             });
 
-            const endDrag = () => {
+            const endDrag = (e) => {
+                // pointercancel 表示浏览器接管了手势（如纵向滚动），此时不应触发轻点打开弹窗
+                const wasCancelled = !!(e && e.type === 'pointercancel');
                 const wasPendingTap = this._dragPending;
                 const tapId = this._pendingDragId;
                 this._dragPending = false;
                 this._pendingDragId = null;
                 if (!this._movingEvent && !this._resizingEvent) {
-                    // 轻点（未达拖拽阈值）：移动端打开任务弹窗
-                    if (wasPendingTap && tapId && this.isMobile()) {
+                    // 轻点（未达拖拽阈值）：移动端打开任务弹窗；浏览器接管滚动时不触发
+                    if (wasPendingTap && tapId && this.isMobile() && !wasCancelled) {
                         const node = this.findNode(tapId);
                         if (node && node.type === 'task') {
                             this.openTaskModal(node.startDate, node.endDate || node.startDate, tapId);
