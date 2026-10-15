@@ -29,6 +29,12 @@ class ProjectManager {
         this.archiveSortBy = 'archivedAt';  // 归档排序字段（默认按归档时间）
         this.favProjectIds = new Set(); // 常用项目快捷按钮
         this._hiddenBarCollapsed = true; // 隐藏栏默认收起
+        // 月视图：三段月份轨道，实现连续滚动切换月份
+        this._pendingRailRestore = null;   // 重排轨道后需还原的视口偏移
+        this._calRecenterLock = false;     // 重排期间忽略滚动事件，避免递归
+        this._lastCalRecenterAt = 0;       // 重排节流
+        this._calRailAnimating = false;    // 按钮平滑滚动动画进行中
+        this._calRailAnimTimer = null;
  
         // 颜色池，用于日历事件
         this.colors = [
@@ -899,9 +905,6 @@ class ProjectManager {
         // 保存滚动位置（修复刷新后回顶部的问题）
         const savedScrollTop = container.scrollTop;
         const savedScrollLeft = container.scrollLeft;
-        let savedCalScrollTop = 0;
-        const calScroll = document.querySelector('.calendar-scroll-area');
-        if (calScroll) savedCalScrollTop = calScroll.scrollTop;
 
         if (this.view === 'table') {
             container.innerHTML = this.renderTableView();
@@ -921,19 +924,24 @@ class ProjectManager {
         // 恢复滚动位置
         container.scrollTop = savedScrollTop;
         container.scrollLeft = savedScrollLeft;
+
+        // 月视图：还原“月份轨道”的滚动位置，保证连续滑动切换月份
         const newCalScroll = document.querySelector('.calendar-scroll-area');
-        if (newCalScroll) {
-            // 滚轮切换月份时，落到新月份的对应边界，保证上下滑动可无缝续接
-            const edge = this._pendingCalScrollEdge;
-            if (edge === 'bottom') {
-                newCalScroll.scrollTop = newCalScroll.scrollHeight;
-            } else if (edge === 'top') {
-                newCalScroll.scrollTop = 0;
-            } else {
-                newCalScroll.scrollTop = savedCalScrollTop;
+        if (newCalScroll && this.calendarType === 'month') {
+            const rail = newCalScroll.querySelector('.calendar-month-rail');
+            const centerBlock = rail && rail.children[1];
+            if (centerBlock) {
+                const restore = this._pendingRailRestore;
+                if (restore) {
+                    // 按滚动前的视觉位置精确定位，实现无跳动续接
+                    newCalScroll.scrollTop = centerBlock.offsetTop - restore.viewportY;
+                } else {
+                    // 默认将当前月对齐到视口顶部
+                    newCalScroll.scrollTop = centerBlock.offsetTop;
+                }
             }
         }
-        this._pendingCalScrollEdge = null;
+        this._pendingRailRestore = null;
     }
  
     renderAll() {
@@ -1379,10 +1387,11 @@ class ProjectManager {
         return this.renderWeekCalendar();
     }
  
-    // 获取周一为起始的日期数组
-    getMonthDates() {
-        const year = this.currentDate.getFullYear();
-        const month = this.currentDate.getMonth();
+    // 获取周一为起始的日期数组（可传入任意月份，默认当前月）
+    getMonthDates(baseDate) {
+        const base = baseDate || this.currentDate;
+        const year = base.getFullYear();
+        const month = base.getMonth();
         const firstDay = new Date(year, month, 1);
         // 转换为周一为起始：getDay() 0=周日, 1=周一, ... 6=周六
         // 转为周一起始：(day + 6) % 7  结果: 0=周一, 1=周二, ... 6=周日
@@ -1644,17 +1653,10 @@ class ProjectManager {
     }
  
     renderMonthCalendar() {
-        const year = this.currentDate.getFullYear();
-        const month = this.currentDate.getMonth();
-        const dates = this.getMonthDates();
-        const weeks = [];
-        for (let i = 0; i < 6; i++) {
-            weeks.push(dates.slice(i * 7, i * 7 + 7));
-        }
- 
-        const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
+        const anchor = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
+        const months = [this._addMonths(anchor, -1), anchor, this._addMonths(anchor, 1)];
         const today = new Date();
-        const allTasks = this.collectTasks();
+        const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
         const projects = this.getProjectsList();
  
         // 项目筛选 UI（多选下拉 + 常用快捷按钮）
@@ -1664,7 +1666,59 @@ class ProjectManager {
             `<div class="calendar-header-cell">${d}</div>`
         ).join('');
  
-        const rows = weeks.map((week) => {
+        // 连续滑动：上月 / 当前月 / 下月 三段堆叠在同一条纵向滚动轨道上
+        const blocks = months.map(m => this._renderMonthBlock(m, today)).join('');
+ 
+        return `
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div class="calendar-nav">
+                    <button onclick="app.prevMonth()" class="calendar-nav-btn">上月</button>
+                    <button onclick="app.goToday()" class="calendar-nav-btn">今天</button>
+                    <button onclick="app.nextMonth()" class="calendar-nav-btn">下月</button>
+                    <h2 class="calendar-title" id="calendarTitle">${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月</h2>
+                    <div class="ml-auto flex items-center gap-3">
+                        <span class="text-xs text-gray-400">滚轮/触控板连续滑动切换月份 · 拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
+                        <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                            新增任务
+                        </button>
+                    </div>
+                </div>
+                ${filterTabs}
+                <div class="calendar-header">${header}</div>
+                <div class="calendar-scroll-area">
+                    <div class="calendar-month-rail" id="calendarGrid">
+                        ${blocks}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+ 
+    // 单个自然月的日历块（月份标签 + 6 周网格）
+    _renderMonthBlock(monthDate, today) {
+        const year = monthDate.getFullYear();
+        const month = monthDate.getMonth();
+        const dates = this.getMonthDates(monthDate);
+        const allTasks = this.collectTasks();
+ 
+        const rows = [];
+        for (let i = 0; i < 6; i++) {
+            rows.push(this._renderMonthWeekRow(dates.slice(i * 7, i * 7 + 7), month, today, allTasks));
+        }
+ 
+        return `
+            <div class="calendar-month-block" data-month="${year}-${String(month + 1).padStart(2, '0')}">
+                <div class="calendar-month-label">${year}年 ${month + 1}月</div>
+                <div class="calendar-grid">
+                    ${rows.join('')}
+                </div>
+            </div>
+        `;
+    }
+ 
+    // 单周行（日期格 + 跨天任务条）
+    _renderMonthWeekRow(week, month, today, allTasks) {
             const weekStart = week[0];
             const weekStartMidnight = new Date(weekStart);
             weekStartMidnight.setHours(0, 0, 0, 0);
@@ -1753,32 +1807,85 @@ class ProjectManager {
                     </div>
                 </div>
             `;
-        }).join('');
+    }
  
-        return `
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div class="calendar-nav">
-                    <button onclick="app.prevMonth()" class="calendar-nav-btn">上月</button>
-                    <button onclick="app.goToday()" class="calendar-nav-btn">今天</button>
-                    <button onclick="app.nextMonth()" class="calendar-nav-btn">下月</button>
-                    <h2 class="calendar-title">${year}年 ${month + 1}月</h2>
-                    <div class="ml-auto flex items-center gap-3">
-                        <span class="text-xs text-gray-400">拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
-                        <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                            新增任务
-                        </button>
-                    </div>
-                </div>
-                ${filterTabs}
-                <div class="calendar-scroll-area">
-                    <div class="calendar-header">${header}</div>
-                    <div class="calendar-grid" id="calendarGrid">
-                        ${rows}
-                    </div>
-                </div>
-            </div>
-        `;
+    // ---------- 月份轨道：连续滚动切换月份 ----------
+ 
+    _addMonths(date, n) {
+        return new Date(date.getFullYear(), date.getMonth() + n, 1);
+    }
+ 
+    _parseMonthISO(str) {
+        if (!str) return null;
+        const [y, m] = str.split('-').map(Number);
+        return new Date(y, m - 1, 1);
+    }
+ 
+    _updateCalendarTitle(anchor) {
+        const el = document.getElementById('calendarTitle');
+        if (el) el.textContent = `${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月`;
+    }
+ 
+    // 轨道滚动：实时更新标题；接近轨道边缘时重排轨道，实现上下无限续接
+    _onCalRailScroll(scrollArea) {
+        if (this._calRecenterLock) return;
+        const rail = scrollArea.querySelector('.calendar-month-rail');
+        if (!rail || rail.children.length < 3) return;
+        const st = scrollArea.scrollTop;
+        const blocks = Array.from(rail.children);
+        let topIdx = blocks.length - 1;
+        for (let i = 0; i < blocks.length; i++) {
+            if (blocks[i].offsetTop + blocks[i].offsetHeight > st + 2) { topIdx = i; break; }
+        }
+        const topAnchor = this._parseMonthISO(blocks[topIdx].dataset.month);
+        if (topAnchor) {
+            this.currentDate = topAnchor;
+            this._updateCalendarTitle(topAnchor);
+        }
+        // 按钮平滑滚动动画进行中不重排，等动画结束后再续接
+        if (this._calRailAnimating) return;
+
+        // 仅在上/下边缘留出空间时重排，避免滚到轨道尽头后卡住
+        const margin = Math.max(60, scrollArea.clientHeight);
+        let anchorBlock = null;
+        if (topIdx === 0 && st < margin) {
+            anchorBlock = blocks[0];                        // 向上续接
+        } else if (topIdx === blocks.length - 1) {
+            anchorBlock = blocks[blocks.length - 1];        // 向下续接
+        }
+        if (!anchorBlock) return;
+
+        const now = Date.now();
+        if (now - (this._lastCalRecenterAt || 0) < 100) return;
+        this._lastCalRecenterAt = now;
+
+        const anchor = this._parseMonthISO(anchorBlock.dataset.month);
+        // 记录锚点月相对视口的偏移，重排后精确还原，做到无跳动
+        this._pendingRailRestore = { viewportY: anchorBlock.offsetTop - st };
+        if (anchor) this.currentDate = anchor;
+        this._calRecenterLock = true;
+        this.renderMain();
+        requestAnimationFrame(() => { this._calRecenterLock = false; });
+    }
+
+    // 上月/下月按钮：在已渲染的轨道上平滑滚动到相邻月份
+    _scrollCalRailBy(dir) {
+        const sc = document.querySelector('.calendar-scroll-area');
+        if (!sc) return false;
+        const rail = sc.querySelector('.calendar-month-rail');
+        if (!rail || rail.children.length < 3) return false;
+        const target = rail.children[dir < 0 ? 0 : 2];
+        if (!target) return false;
+        this._calRailAnimating = true;
+        sc.scrollTo({ top: target.offsetTop, behavior: 'smooth' });
+        // 动画结束后再触发一次边缘重排，保证下一次点击仍有可滚动的月份
+        clearTimeout(this._calRailAnimTimer);
+        this._calRailAnimTimer = setTimeout(() => {
+            this._calRailAnimating = false;
+            const cur = document.querySelector('.calendar-scroll-area');
+            if (cur) this._onCalRailScroll(cur);
+        }, 700);
+        return true;
     }
  
     renderWeekCalendar() {
@@ -2086,11 +2193,14 @@ class ProjectManager {
     // ---------- 日历导航 ----------
  
     prevMonth() {
+        // 月视图：在已渲染的轨道上平滑滑到上一个月，保持连续滑动体验
+        if (this.calendarType === 'month' && this._scrollCalRailBy(-1)) return;
         this.currentDate.setMonth(this.currentDate.getMonth() - 1);
         this.renderMain();
     }
- 
+
     nextMonth() {
+        if (this.calendarType === 'month' && this._scrollCalRailBy(1)) return;
         this.currentDate.setMonth(this.currentDate.getMonth() + 1);
         this.renderMain();
     }
@@ -2622,33 +2732,11 @@ class ProjectManager {
         const grid = document.getElementById(gridId);
         if (!grid) return;
 
-        // 鼠标滚轮切换月份（保留上月/下月按钮与内部纵向滚动）
+        // 月视图：连续滚动切换月份（由轨道滚动自然驱动，不再拦截滚轮）
         if (this.calendarType === 'month') {
             const scrollArea = document.querySelector('.calendar-scroll-area');
             if (scrollArea) {
-                scrollArea.addEventListener('wheel', (e) => {
-                    if (Math.abs(e.deltaY) < 1) return;
-                    // 内容超出且尚未到边界时，交还原生纵向滚动
-                    const canScroll = scrollArea.scrollHeight > scrollArea.clientHeight + 1;
-                    if (canScroll) {
-                        const atTop = scrollArea.scrollTop <= 0;
-                        const atBottom = scrollArea.scrollTop + scrollArea.clientHeight >= scrollArea.scrollHeight - 1;
-                        if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) return;
-                    }
-                    e.preventDefault();
-                    // 节流，避免滚轮/触控板惯性一次跳过多个月
-                    const now = Date.now();
-                    if (now - (this._lastWheelSwitchAt || 0) < 160) return;
-                    this._lastWheelSwitchAt = now;
-                    // 向上翻月落到上月底部、向下翻月落到下月顶部，保证连续滑动可无缝续接
-                    if (e.deltaY < 0) {
-                        this._pendingCalScrollEdge = 'bottom';
-                        this.prevMonth();
-                    } else {
-                        this._pendingCalScrollEdge = 'top';
-                        this.nextMonth();
-                    }
-                }, { passive: false });
+                scrollArea.addEventListener('scroll', () => this._onCalRailScroll(scrollArea), { passive: true });
             }
         }
 
@@ -2702,11 +2790,12 @@ class ProjectManager {
  
                 let baseDate;
                 if (this.calendarType === 'month') {
-                    const weekRows = document.querySelectorAll('.calendar-week-row');
                     const rowEl = e.target.closest('.calendar-week-row');
-                    if (!rowEl) return;
-                    const rowIdx = Array.from(weekRows).indexOf(rowEl);
-                    const dates = this.getMonthDates();
+                    const blockEl = e.target.closest('.calendar-month-block');
+                    if (!rowEl || !blockEl) return;
+                    // 按所在月份块内的行索引取基准日期，兼容多月份轨道
+                    const rowIdx = Array.from(blockEl.querySelectorAll('.calendar-week-row')).indexOf(rowEl);
+                    const dates = this.getMonthDates(this._parseMonthISO(blockEl.dataset.month));
                     baseDate = dates[rowIdx * 7];
                 } else {
                     baseDate = this.getWeekDates()[0];
