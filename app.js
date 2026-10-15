@@ -14,7 +14,7 @@ class ProjectManager {
         this.view = 'table'; // 'table' | 'calendar' | 'archive'
         this.calendarType = 'month'; // 'month' | 'week'
         this.currentDate = new Date();
-        this.selectedProjectId = 'all'; // 'all' | projectId
+        this.selectedProjectIds = new Set(); // 空集合=全部项目，非空=仅显示选中项目
         this.expandedNodes = new Set();
         this.selectedNodeId = null;
         this.editingProject = null;
@@ -22,6 +22,19 @@ class ProjectManager {
         this.sidebarCollapsed = false;
         this.sidebarWidth = 300;
         this.isResizing = false;
+        // 2.0 新增
+        this.searchKeyword = '';        // 全局搜索关键词
+        this.tableCollapsed = new Set(); // 表格视图中折叠的节点ID
+        this.archiveSearchKeyword = '';  // 归档搜索关键词
+        this.archiveSortBy = 'archivedAt';  // 归档排序字段（默认按归档时间）
+        this.favProjectIds = new Set(); // 常用项目快捷按钮
+        this._hiddenBarCollapsed = true; // 隐藏栏默认收起
+        // 月视图：三段月份轨道，实现连续滚动切换月份
+        this._pendingRailRestore = null;   // 重排轨道后需还原的视口偏移
+        this._calRecenterLock = false;     // 重排期间忽略滚动事件，避免递归
+        this._lastCalRecenterAt = 0;       // 重排节流
+        this._calRailAnimating = false;    // 按钮平滑滚动动画进行中
+        this._calRailAnimTimer = null;
  
         // 颜色池，用于日历事件
         this.colors = [
@@ -48,9 +61,36 @@ class ProjectManager {
         } else {
             this.data = this.getDefaultData();
         }
- 
+
         // 默认展开所有节点
         this.traverse(node => this.expandedNodes.add(node.id));
+
+        // 初始化常用项目（localStorage 持久化）
+        const savedFavs = localStorage.getItem('pmFavProjects');
+        if (savedFavs) {
+            try { this.favProjectIds = new Set(JSON.parse(savedFavs)); } catch(e) {}
+        }
+        if (this.favProjectIds.size === 0) {
+            // 默认取前3个项目作为常用
+            const projects = this.getProjectsList();
+            projects.slice(0, 3).forEach(p => this.favProjectIds.add(p.id));
+        }
+    }
+
+    saveFavProjects() {
+        localStorage.setItem('pmFavProjects', JSON.stringify([...this.favProjectIds]));
+    }
+
+    addFavProject(projectId) {
+        this.favProjectIds.add(projectId);
+        this.saveFavProjects();
+        this.renderMain();
+    }
+
+    removeFavProject(projectId) {
+        this.favProjectIds.delete(projectId);
+        this.saveFavProjects();
+        this.renderMain();
     }
  
     getDefaultData() {
@@ -200,6 +240,21 @@ class ProjectManager {
     init() {
         this.renderTree();
         this.renderMain();
+
+        // 点击外部关闭多选下拉框
+        document.addEventListener('click', (e) => {
+            document.querySelectorAll('.project-multiselect-wrapper.open').forEach(w => {
+                if (!w.contains(e.target)) w.classList.remove('open');
+            });
+            document.querySelectorAll('.project-fav-add-wrapper.open').forEach(w => {
+                if (!w.contains(e.target)) w.classList.remove('open');
+            });
+        });
+
+        // 视口尺寸变化：桌面 ↔ 移动切换时同步侧栏状态
+        window.addEventListener('resize', () => {
+            if (!this.isMobile()) this.setSidebarDrawer(false);
+        });
     }
  
     // ---------- 工具方法 ----------
@@ -249,11 +304,195 @@ class ProjectManager {
         }
         this.renderAll();
     }
+
+    confirmDeleteNode(id, type = '节点') {
+        const node = this.findNode(id);
+        if (!node) return;
+        // 收集会被连带删除的子节点数量，便于提示
+        let childCount = 0;
+        if (node.children) {
+            const count = (nodes) => nodes.forEach(n => { childCount++; if (n.children) count(n.children); });
+            count(node.children);
+        }
+        const extra = childCount > 0 ? `\n注意：该${type}下有 ${childCount} 个子节点将一并删除。` : '';
+        if (!confirm(`确定删除${type}「${node.name}」吗？${extra}`)) return;
+        this.deleteNode(id);
+        // 如果删除的是当前正在编辑的任务弹窗中的任务，关闭弹窗
+        if (this._taskModalData && this._taskModalData.taskId === id) {
+            this.closeTaskModal();
+        }
+    }
+
+    // 从任务弹窗中删除当前任务
+    deleteTaskFromModal() {
+        if (!this._taskModalData || !this._taskModalData.taskId) {
+            alert('新建任务不可删除');
+            return;
+        }
+        const taskId = this._taskModalData.taskId;
+        const node = this.findNode(taskId);
+        if (!node) return;
+        if (!confirm(`确定删除任务「${node.name}」吗？`)) return;
+        this.closeTaskModal();
+        this.deleteNode(taskId);
+    }
+
+    // ---------- 项目隐藏 / 恢复 ----------
+
+    // 隐藏项目（移动到隐藏栏）
+    hideProject(projectId) {
+        const project = this.findNode(projectId);
+        if (!project || project.type !== 'project') return;
+        project.hidden = true;
+        project.hiddenAt = new Date().toISOString();
+        this.renderAll();
+    }
+
+    // 恢复隐藏的项目（从隐藏栏移回主列表）
+    restoreProject(projectId) {
+        const project = this.findNode(projectId);
+        if (!project || project.type !== 'project') return;
+        project.hidden = false;
+        project.hiddenAt = null;
+        this.renderAll();
+    }
+
+    // 在隐藏栏中展开/折叠某个项目
+    toggleHiddenProject(projectId) {
+        if (this._hiddenExpanded && this._hiddenExpanded.has(projectId)) {
+            this._hiddenExpanded.delete(projectId);
+        } else {
+            this._hiddenExpanded = this._hiddenExpanded || new Set();
+            this._hiddenExpanded.add(projectId);
+        }
+        this.renderMain();
+    }
+
+    // 收集所有被隐藏的项目（带客户名等上下文）
+    getHiddenProjects() {
+        const list = [];
+        const walk = (nodes, customer = null) => {
+            nodes.forEach(node => {
+                if (node.type === 'customer') {
+                    walk(node.children || [], node);
+                } else if (node.type === 'project') {
+                    if (node.hidden) {
+                        list.push({
+                            id: node.id,
+                            name: node.name,
+                            startDate: node.startDate || '',
+                            endDate: node.endDate || '',
+                            description: node.description || '',
+                            hiddenAt: node.hiddenAt || null,
+                            customerName: customer?.name || '-',
+                            customerId: customer?.id || '',
+                            stages: node.children || []
+                        });
+                    }
+                }
+            });
+        };
+        walk(this.data);
+        // 按隐藏时间倒序（最近隐藏的在前）
+        list.sort((a, b) => (b.hiddenAt || '').localeCompare(a.hiddenAt || ''));
+        return list;
+    }
+
+    // 渲染隐藏栏 HTML（固定在页面底部，仅在列表视图显示）
+    renderHiddenBar() {
+        const hidden = this.getHiddenProjects();
+        const count = hidden.length;
+        const hasContent = count > 0;
+
+        const collapsed = this._hiddenBarCollapsed ? true : false;
+
+        const items = hidden.map(p => {
+            const expanded = (this._hiddenExpanded && this._hiddenExpanded.has(p.id)) || false;
+            const stageRows = [];
+            if (expanded) {
+                const stages = (p.stages || []).filter(s => s.type === 'stage');
+                if (stages.length === 0) {
+                    stageRows.push(`<div class="text-xs text-gray-400 py-2">该暂无环节</div>`);
+                } else {
+                    stages.forEach(s => {
+                        const tasks = (s.children || []).filter(t => t.type === 'task');
+                        const taskList = tasks.length === 0
+                            ? `<span class="text-xs text-gray-400">（无任务）</span>`
+                            : tasks.map(t => `
+                                <div class="hidden-task-row">
+                                    <span class="font-medium text-pink-700">${t.name}</span>
+                                    <span class="text-xs text-gray-400">${t.startDate || '-'} ~ ${t.endDate || '-'}</span>
+                                    ${t.archived ? `<span class="text-xs text-gray-400">（已归档）</span>` : ''}
+                                </div>
+                            `).join('');
+                        stageRows.push(`
+                            <div class="hidden-stage-row">
+                                <div class="flex items-center gap-2">
+                                    <div class="stage-color-dot-table" style="background:${s.color || '#94a3b8'};width:12px;height:12px;border-radius:50%;flex-shrink:0;border:2px solid white;box-shadow:0 0 0 1px ${s.color || '#94a3b8'}"></div>
+                                    <span style="color:${s.color || '#94a3b8'};font-weight:600">${s.name}</span>
+                                    <span class="text-xs text-gray-400">${tasks.length} 个任务</span>
+                                </div>
+                                <div class="ml-5 mt-1 space-y-1">${taskList}</div>
+                            </div>
+                        `);
+                    });
+                }
+            }
+            return `
+                <div class="hidden-project-card" data-project-id="${p.id}">
+                    <div class="hidden-project-head" onclick="app.toggleHiddenProject('${p.id}')">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 4.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L10.586 9 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+                            <span class="font-medium text-gray-700 truncate">${p.name}</span>
+                            <span class="text-xs text-gray-400 flex-shrink-0">${p.customerName}</span>
+                            <span class="text-xs text-gray-400 flex-shrink-0">${p.startDate || ''} ~ ${p.endDate || ''}</span>
+                        </div>
+                        <div class="flex items-center gap-3 flex-shrink-0">
+                            <span class="text-xs text-gray-400" title="隐藏时间">隐藏于 ${this.formatDateTime(p.hiddenAt)}</span>
+                            <button onclick="event.stopPropagation();app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑</button>
+                            <button onclick="event.stopPropagation();app.restoreProject('${p.id}')" class="text-green-600 hover:text-green-700 text-xs font-medium">恢复</button>
+                        </div>
+                    </div>
+                    ${expanded ? `<div class="hidden-project-body">${stageRows.join('')}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div id="hiddenBar" class="hidden-bar ${collapsed ? 'collapsed' : ''}">
+                <div class="hidden-bar-head" onclick="app.toggleHiddenBar()">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-gray-500 transition-transform ${collapsed ? '' : 'rotate-180'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        <span class="font-semibold text-gray-700">隐藏栏</span>
+                        <span class="text-xs text-gray-400">（${count} 个项目 · 吸附底部，不随页面滚动）</span>
+                    </div>
+                    ${!collapsed && hasContent ? `<span class="text-xs text-gray-400">点击折叠</span>` : ''}
+                </div>
+                ${!collapsed ? `
+                    <div class="hidden-bar-body">
+                        ${hasContent ? items : `<div class="text-sm text-gray-400 py-4 text-center">暂无被隐藏的项目</div>`}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    // 折叠/展开隐藏栏
+    toggleHiddenBar() {
+        this._hiddenBarCollapsed = !this._hiddenBarCollapsed;
+        this.renderMain();
+    }
  
     toggleTaskArchived(taskId) {
         const task = this.findNode(taskId);
         if (task && task.type === 'task') {
             task.archived = !task.archived;
+            // 归档时记录归档时间，取消归档时清除
+            if (task.archived) {
+                task.archivedAt = new Date().toISOString();
+            } else {
+                task.archivedAt = null;
+            }
             this.renderAll();
         }
     }
@@ -270,6 +509,15 @@ class ProjectManager {
         if (!dateStr) return '-';
         const d = new Date(dateStr);
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    // 格式化日期时间（用于归档时间、隐藏时间等时间戳显示）
+    formatDateTime(dateStr) {
+        if (!dateStr) return '-';
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '-';
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
  
     isSameDay(d1, d2) {
@@ -315,7 +563,191 @@ class ProjectManager {
     isHoliday(d) {
         return this.getHolidayName(d) !== null;
     }
- 
+
+    // ---------- 工作日 / 休息日判定（含 2026 法定节假日与调休）----------
+    // 2026 法定节假日（休息日）。仅记录"额外休息日"——即非周末的假日；
+    // 周末默认即休息，故周末日期无需重复登记。
+    _2026HolidayRestDays = new Set([
+        '2026-01-01',              // 元旦
+        '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-23', // 春节（2-21/22 周末）
+        '2026-04-06',              // 清明（4-4/5 周末）
+        '2026-05-01', '2026-05-04', '2026-05-05', // 劳动节（5-2/3 周末）
+        '2026-06-19',              // 端午（6-20/21 周末）
+        '2026-09-25',              // 中秋（9-26/27 周末）
+        '2026-10-01', '2026-10-02', '2026-10-05', '2026-10-06', '2026-10-07' // 国庆（10-3/4 周末）
+    ]);
+
+    // 2026 调休工作日（周末但需上班）
+    _2026MakeupWorkdays = new Set([
+        '2026-02-14', // 春节前调休（周六）
+        '2026-02-28', // 春节后调休（周六）
+        '2026-04-26', // 劳动节前调休（周日）
+        '2026-09-20', // 中秋国庆调休（周日上班）
+        '2026-10-10'  // 国庆后调休（周六）
+    ]);
+
+    // 是否为休息日：周末 或 法定假日，但调休工作日不算
+    isRestDay(d) {
+        const dateStr = this.formatDateISO(d);
+        if (this._2026MakeupWorkdays.has(dateStr)) return false; // 调休工作日
+        if (this._2026HolidayRestDays.has(dateStr)) return true; // 法定假日
+        const day = d.getDay();
+        return day === 0 || day === 6; // 默认周末休息
+    }
+
+    isWorkday(d) {
+        return !this.isRestDay(d);
+    }
+
+    // 统计 [start, end] 区间内的工作日数
+    countWorkdays(startDate, endDate) {
+        if (!startDate) return 0;
+        const s = this.parseDate(startDate);
+        if (!s) return 0;
+        let start = s;
+        let end = endDate ? this.parseDate(endDate) : start;
+        if (!end) end = start;
+        if (end < start) { const t = start; start = end; end = t; } // 起止颠倒则交换
+        let count = 0;
+        const cur = new Date(start.getTime());
+        const endMs = end.getTime();
+        while (cur.getTime() <= endMs) {
+            if (this.isWorkday(cur)) count++;
+            cur.setDate(cur.getDate() + 1);
+        }
+        return count;
+    }
+
+    // 计算任务在指定周内的工作日连续段（用于"仅工作日执行"任务条分段渲染）
+    _workdaySegmentsInWeek(taskStart, taskEnd, weekStartMidnight) {
+        const segs = [];
+        let curStart = null;
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(weekStartMidnight.getTime());
+            d.setDate(d.getDate() + i);
+            const inRange = d.getTime() >= taskStart.getTime() && d.getTime() <= taskEnd.getTime();
+            const isWork = this.isWorkday(d);
+            if (inRange && isWork) {
+                if (curStart === null) curStart = i;
+            } else if (curStart !== null) {
+                segs.push({ startOffset: curStart, endOffset: i - 1 });
+                curStart = null;
+            }
+        }
+        if (curStart !== null) segs.push({ startOffset: curStart, endOffset: 6 });
+        return segs;
+    }
+
+    // 渲染任务阶段（日历任务条中间行 + 弹窗外其他展示位）
+    _renderPhasesLine(task) {
+        if (!task || !Array.isArray(task.phases) || task.phases.length === 0) return '';
+        // 只展示有名称的阶段；格式：阶段A 7/1~7/5 · 阶段B 7/6~7/10
+        const parts = task.phases
+            .filter(p => p && p.name)
+            .map(p => {
+                const s = p.startDate ? this._shortDate(p.startDate) : '';
+                const e = p.endDate ? this._shortDate(p.endDate) : '';
+                const range = (s || e) ? ` ${s}${e ? '~' + e : ''}` : '';
+                const doneCls = p.done ? ' phase-done-chip' : '';
+                const doneTag = p.done ? '<span class="phase-done-mark">✓</span>' : '';
+                return `<span class="phase-chip${doneCls}">${p.name}${range}${doneTag}</span>`;
+            })
+            .filter(html => html);
+        return parts.length ? parts.join('<span class="phase-sep">·</span>') : '';
+    }
+
+    // 任务阶段泳道分配：时间重叠的阶段分到不同泳道，避免日历上互相覆盖
+    // 返回 { map: { phaseId: lane }, count: 泳道数 }
+    _phaseLanes(task) {
+        const map = {};
+        if (!task || !Array.isArray(task.phases)) return { map, count: 0 };
+        const items = task.phases.map((ph, i) => {
+            const s = ph.startDate ? this.parseDate(ph.startDate) : null;
+            const e = ph.endDate ? this.parseDate(ph.endDate) : s;
+            return {
+                ph, i,
+                key: ph.id || ('idx' + i),
+                startMs: s ? s.getTime() : null,
+                endMs: e ? e.getTime() : (s ? s.getTime() : null)
+            };
+        });
+        // 开始早的排前面；无日期的排最后
+        items.sort((a, b) => {
+            const av = a.startMs === null ? Number.MAX_SAFE_INTEGER : a.startMs;
+            const bv = b.startMs === null ? Number.MAX_SAFE_INTEGER : b.startMs;
+            return av - bv || a.i - b.i;
+        });
+        const laneEnds = []; // 每条泳道最后一个阶段的结束时间
+        items.forEach(it => {
+            if (it.startMs === null) {
+                // 无日期：各自独占一条泳道，避免全部叠在一起
+                map[it.key] = laneEnds.length;
+                laneEnds.push(Infinity);
+                return;
+            }
+            // 日期为闭区间，故用严格小于判断不重叠
+            let lane = laneEnds.findIndex(end => end < it.startMs);
+            if (lane === -1) {
+                lane = laneEnds.length;
+                laneEnds.push(it.endMs);
+            } else {
+                laneEnds[lane] = it.endMs;
+            }
+            map[it.key] = lane;
+        });
+        return { map, count: laneEnds.length };
+    }
+
+    // 阶段迷你条单行高度（px）
+    static PHASE_ROW_H = 16;
+
+    // 计算阶段在任务条内的定位（百分比 left/width + 泳道 lane），相对任务条本身
+    // weekStartMidnight: 该周的周一零点 Date；segStartOffset/segEndOffset: 当前段在周内的偏移(0-6)
+    _phaseBarPositions(task, weekStartMidnight, segStartOffset, segEndOffset) {
+        if (!task || !Array.isArray(task.phases) || task.phases.length === 0) return [];
+        // 段的真实起止日期 = 周起始 + 周内偏移（关键修正：必须基于周起始而非任务起始）
+        const segLeftMs = new Date(weekStartMidnight.getTime());
+        segLeftMs.setDate(segLeftMs.getDate() + segStartOffset);
+        const segRightMs = new Date(weekStartMidnight.getTime());
+        segRightMs.setDate(segRightMs.getDate() + segEndOffset);
+        // 段的覆盖范围（天数），用作分母计算百分比
+        const segSpan = segEndOffset - segStartOffset + 1; // ≥1
+        const laneInfo = this._phaseLanes(task);
+        const positions = [];
+        task.phases.forEach((ph, idx) => {
+            if (!ph.name) return;
+            const lane = laneInfo.map[ph.id || ('idx' + idx)] || 0;
+            const pStart = ph.startDate ? this.parseDate(ph.startDate) : null;
+            const pEnd = ph.endDate ? this.parseDate(ph.endDate) : (pStart || null);
+            if (!pStart) {
+                // 无日期：平均分布
+                positions.push({ phase: ph, left: 0, width: 100, lane });
+                return;
+            }
+            let ps = pStart, pe = pEnd || pStart;
+            // 与段范围求交集
+            const iStart = ps < segLeftMs ? segLeftMs : ps;
+            const iEnd = pe > segRightMs ? segRightMs : pe;
+            if (iStart > segRightMs || iEnd < segLeftMs) return; // 阶段不在此段内
+            const relLeft = Math.round((iStart - segLeftMs) / 86400000);
+            const relWidth = Math.max(1, Math.round((iEnd - iStart) / 86400000) + 1);
+            positions.push({
+                phase: ph,
+                left: (relLeft / segSpan) * 100,
+                width: (relWidth / segSpan) * 100,
+                lane
+            });
+        });
+        return positions;
+    }
+
+    // 短日期格式 MM/DD
+    _shortDate(dateStr) {
+        if (!dateStr) return '';
+        const [y, m, d] = dateStr.split('-').map(Number);
+        return `${m}/${d}`;
+    }
+
     parseDate(dateStr) {
         if (!dateStr) return null;
         const [y, m, d] = dateStr.split('-').map(Number);
@@ -377,9 +809,10 @@ class ProjectManager {
  
             const addActions = {
                 customer: `<button onclick="event.stopPropagation();app.showInputModal('新建项目', name => app.addChild('${node.id}', 'project', name))" class="tree-action-btn" title="添加项目"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>`,
-                project: `<button onclick="event.stopPropagation();app.showInputModal('新建环节', name => app.addChild('${node.id}', 'stage', name))" class="tree-action-btn" title="添加环节"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>` +
+                project: `<button onclick="event.stopPropagation();app.openStageModal(null, '${node.id}')" class="tree-action-btn" title="添加环节"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>` +
                          `<button onclick="event.stopPropagation();app.editProject('${node.id}')" class="tree-action-btn" title="编辑项目"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>`,
-                stage: `<button onclick="event.stopPropagation();app.showInputModal('新建任务', name => app.addChild('${node.id}', 'task', name))" class="tree-action-btn" title="添加任务"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>`,
+                stage: `<button onclick="event.stopPropagation();app.showInputModal('新建任务', name => app.addChild('${node.id}', 'task', name))" class="tree-action-btn" title="添加任务"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>` +
+                       `<button onclick="event.stopPropagation();app.openStageModal('${node.id}')" class="tree-action-btn" title="编辑环节"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>`,
                 task: '',
             };
  
@@ -392,7 +825,7 @@ class ProjectManager {
                             </span>
                         ` : '<span class="w-4"></span>'}
                         <span class="tree-icon">${icons[node.type]}</span>
-                        <span class="text-sm text-gray-700 truncate flex-1">${node.name}</span>
+                        <span class="text-sm text-gray-700 truncate flex-1">${node.name}${node.type === 'task' && this.countWorkdays(node.startDate, node.endDate) > 0 ? `<span class="workday-count" title="花费工作日数">（${this.countWorkdays(node.startDate, node.endDate)}）</span>${node.workdaysOnly ? '<span class="workday-only-tag" title="仅工作日执行">班</span>' : ''}` : ''}</span>
                         <span class="tree-actions">
                             ${addActions[node.type] || ''}
                             <button onclick="event.stopPropagation();app.deleteNode('${node.id}')" class="tree-action-btn" title="删除">
@@ -422,7 +855,13 @@ class ProjectManager {
     selectNode(id) {
         this.selectedNodeId = id;
         this.renderTree();
-        // 可选：根据选中节点筛选主视图
+        // 移动端点击树节点后收起抽屉，避免遮挡内容
+        if (this.isMobile()) this.closeSidebarDrawer();
+        // 如果点击的是任务节点，打开编辑弹窗
+        const node = this.findNode(id);
+        if (node && node.type === 'task') {
+            this.openTaskModal(null, null, id);
+        }
     }
  
     addCustomer() {
@@ -456,6 +895,8 @@ class ProjectManager {
             newNode.startDate = '';
             newNode.endDate = '';
             newNode.archived = false;
+            newNode.workdaysOnly = true;
+            newNode.phases = [];
         }
  
         parent.children = parent.children || [];
@@ -468,15 +909,46 @@ class ProjectManager {
  
     renderMain() {
         const container = document.getElementById('mainContent');
+        // 保存滚动位置（修复刷新后回顶部的问题）
+        const savedScrollTop = container.scrollTop;
+        const savedScrollLeft = container.scrollLeft;
+
         if (this.view === 'table') {
             container.innerHTML = this.renderTableView();
             this.initTableInteractions();
+            // 列表视图底部有固定隐藏栏，需留白避免遮挡
+            container.classList.add('has-hidden-bar');
         } else if (this.view === 'archive') {
             container.innerHTML = this.renderArchiveView();
+            this.initArchiveInteractions();
+            container.classList.remove('has-hidden-bar');
         } else {
             container.innerHTML = this.renderCalendarView();
             this.initCalendarInteractions();
+            container.classList.remove('has-hidden-bar');
         }
+
+        // 恢复滚动位置
+        container.scrollTop = savedScrollTop;
+        container.scrollLeft = savedScrollLeft;
+
+        // 月视图：还原“月份轨道”的滚动位置，保证连续滑动切换月份
+        const newCalScroll = document.querySelector('.calendar-scroll-area');
+        if (newCalScroll && this.calendarType === 'month') {
+            const rail = newCalScroll.querySelector('.calendar-month-rail');
+            const centerBlock = rail && rail.children[1];
+            if (centerBlock) {
+                const restore = this._pendingRailRestore;
+                if (restore) {
+                    // 按滚动前的视觉位置精确定位，实现无跳动续接
+                    newCalScroll.scrollTop = centerBlock.offsetTop - restore.viewportY;
+                } else {
+                    // 默认将当前月对齐到视口顶部
+                    newCalScroll.scrollTop = centerBlock.offsetTop;
+                }
+            }
+        }
+        this._pendingRailRestore = null;
     }
  
     renderAll() {
@@ -593,9 +1065,10 @@ class ProjectManager {
             const gist = await res.json();
             this.saveGistConfig(cleanToken, gist.id);
             this.updateSyncStatus(`同步成功 · ${new Date().toLocaleTimeString()}`);
+            this.showToast('推送成功，数据已同步到云端', 'success');
             return gist;
         } catch (e) {
-            alert('同步失败：' + e.message);
+            this.showToast('推送失败：' + e.message, 'error');
             console.error(e);
         }
     }
@@ -645,10 +1118,11 @@ class ProjectManager {
             this.saveToLocal();
             this.renderAll();
             this.updateSyncStatus(`已从云端拉取 · ${new Date().toLocaleTimeString()}`);
+            if (!silent) this.showToast('拉取成功，已加载云端数据', 'success');
             return parsed;
         } catch (e) {
             if (!silent) {
-                alert('拉取失败：' + e.message + '\n\n如果是 404 错误，可能是 Gist ID 已失效，请重新同步一次。');
+                this.showToast('拉取失败：' + e.message, 'error');
             }
             console.error(e);
             return null;
@@ -657,7 +1131,36 @@ class ProjectManager {
  
     updateSyncStatus(text) {
         const el = document.getElementById('syncStatus');
-        if (el) el.textContent = text;
+        if (el) {
+            el.textContent = text;
+            el.classList.remove('hidden');
+        }
+    }
+
+    // ---------- 全局提示 toast ----------
+    showToast(message, type = 'success') {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        const toast = document.createElement('div');
+        const palette = type === 'error'
+            ? { bg: 'bg-red-50', border: 'border-red-200', icon: 'text-red-500', dot: '#ef4444' }
+            : type === 'warning'
+            ? { bg: 'bg-amber-50', border: 'border-amber-200', icon: 'text-amber-500', dot: '#f59e0b' }
+            : { bg: 'bg-green-50', border: 'border-green-200', icon: 'text-green-500', dot: '#22c55e' };
+        const iconPath = type === 'error'
+            ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>'
+            : type === 'warning'
+            ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"/>'
+            : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>';
+        toast.className = `pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-lg border shadow-md text-sm ${palette.bg} ${palette.border} text-gray-700 toast-anim`;
+        toast.innerHTML = `<svg class="w-4 h-4 ${palette.icon}" fill="none" stroke="currentColor" viewBox="0 0 24 24">${iconPath}</svg><span>${message}</span>`;
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(20px)';
+            toast.style.transition = 'all 0.3s';
+            setTimeout(() => toast.remove(), 300);
+        }, 2600);
     }
  
     openSyncModal() {
@@ -681,31 +1184,53 @@ class ProjectManager {
         this.updateSyncStatus(id ? '已配置 · ' + new Date().toLocaleTimeString() : '配置已清除');
     }
  
-    // ---------- 表格视图 ----------
+    // ---------- 表格视图（2.0 可折叠分组）----------
  
     renderTableView() {
-        const rows = [];
+        // 构建分组数据
+        const groups = [];
         const walk = (nodes, path = []) => {
             nodes.forEach(node => {
+                // 隐藏的项目不显示在主列表中（已移至隐藏栏）
+                if (node.type === 'project' && node.hidden) return;
                 const newPath = [...path, node];
                 if (node.type === 'task') {
+                    // 搜索过滤
+                    if (this.searchKeyword) {
+                        const kw = this.searchKeyword.toLowerCase();
+                        const matchName = node.name.toLowerCase().includes(kw);
+                        const matchProject = newPath.find(n => n.type === 'project')?.name?.toLowerCase().includes(kw);
+                        const matchCustomer = newPath.find(n => n.type === 'customer')?.name?.toLowerCase().includes(kw);
+                        if (!matchName && !matchProject && !matchCustomer) return;
+                    }
                     const customer = newPath.find(n => n.type === 'customer');
                     const project = newPath.find(n => n.type === 'project');
                     const stage = newPath.find(n => n.type === 'stage');
-                    rows.push({
-                        customerId: customer?.id || '',
-                        customer: customer?.name || '-',
-                        projectId: project?.id || '',
-                        project: project?.name || '-',
-                        stageId: stage?.id || '',
-                        stage: stage?.name || '-',
-                        stageColor: stage?.color || '#94a3b8',
-                        stageName: stage?.name || '-',
-                        taskId: node.id,
-                        task: node.name,
-                        startDate: node.startDate || '-',
-                        endDate: node.endDate || '-',
-                        description: project?.description || '-',
+
+                    let cGroup = groups.find(g => g.id === customer?.id);
+                    if (!cGroup && customer) {
+                        cGroup = { id: customer.id, name: customer.name, projects: [] };
+                        groups.push(cGroup);
+                    }
+                    if (!cGroup) return;
+
+                    let pGroup = cGroup.projects.find(p => p.id === project?.id);
+                    if (!pGroup && project) {
+                        pGroup = { id: project.id, name: project.name, startDate: project.startDate, endDate: project.endDate, description: project.description || '', stages: [] };
+                        cGroup.projects.push(pGroup);
+                    }
+                    if (!pGroup) return;
+
+                    let sGroup = pGroup.stages.find(s => s.id === stage?.id);
+                    if (!sGroup && stage) {
+                        sGroup = { id: stage.id, name: stage.name, color: stage.color || '#94a3b8', tasks: [] };
+                        pGroup.stages.push(sGroup);
+                    }
+                    if (!sGroup) return;
+
+                    sGroup.tasks.push({
+                        id: node.id, name: node.name,
+                        startDate: node.startDate || '-', endDate: node.endDate || '-',
                         archived: node.archived || false
                     });
                 }
@@ -716,122 +1241,147 @@ class ProjectManager {
         };
         walk(this.data);
  
-        // 计算合并的 rowspan
-        let customerRowspan = {};
-        let projectRowspan = {};
-        let stageRowspan = {};
-        let i = 0;
-        while (i < rows.length) {
-            const cId = rows[i].customerId;
-            let cEnd = i;
-            while (cEnd < rows.length && rows[cEnd].customerId === cId) cEnd++;
-            customerRowspan[i] = cEnd - i;
+        // 统计总任务数
+        let totalTasks = 0;
+        groups.forEach(c => c.projects.forEach(p => p.stages.forEach(s => totalTasks += s.tasks.length)));
  
-            let j = i;
-            while (j < cEnd) {
-                const pId = rows[j].projectId;
-                let pEnd = j;
-                while (pEnd < cEnd && rows[pEnd].projectId === pId) pEnd++;
-                projectRowspan[j] = pEnd - j;
+        const collapseIcon = (collapsed) => collapsed
+            ? `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 4.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L10.586 9 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>`
+            : `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>`;
  
-                let k = j;
-                while (k < pEnd) {
-                    const sId = rows[k].stageId;
-                    let sEnd = k;
-                    while (sEnd < pEnd && rows[sEnd].stageId === sId) sEnd++;
-                    stageRowspan[k] = sEnd - k;
-                    k = sEnd;
-                }
-                j = pEnd;
+        const rows = [];
+        groups.forEach(c => {
+            const cCollapsed = this.tableCollapsed.has(c.id);
+            let cTaskCount = 0;
+            c.projects.forEach(p => p.stages.forEach(s => cTaskCount += s.tasks.length));
+ 
+            // 客户分组头
+            rows.push(`
+                <tr class="group-header" data-customer="${c.id}">
+                    <td colspan="7" class="bg-blue-50/80 border-l-4 border-blue-500 py-2 px-4">
+                        <div class="flex items-center gap-2">
+                            <button onclick="app.toggleTableCollapse('${c.id}')" class="text-blue-600 hover:text-blue-800 flex-shrink-0">${collapseIcon(cCollapsed)}</button>
+                            <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                            <span class="font-semibold text-blue-800">${c.name}</span>
+                            <span class="text-xs text-blue-400">${cTaskCount} 个任务</span>
+                        </div>
+                    </td>
+                </tr>
+            `);
+ 
+            if (!cCollapsed) {
+                c.projects.forEach(p => {
+                    const pCollapsed = this.tableCollapsed.has(p.id);
+                    let pTaskCount = 0;
+                    p.stages.forEach(s => pTaskCount += s.tasks.length);
+ 
+                    // 项目分组头（支持拖拽排序）
+                    rows.push(`
+                        <tr class="group-header project-header-row" data-customer="${c.id}" data-project="${p.id}" draggable="true">
+                            <td colspan="7" class="bg-green-50/60 border-l-4 border-green-500 py-2 pl-10 pr-4">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-2">
+                                        <span class="project-drag-handle" title="拖拽项目排序">
+                                            <svg class="w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a1 1 0 100 2 1 1 0 000-2zM7 9a1 1 0 100 2 1 1 0 000-2zM7 14a1 1 0 100 2 1 1 0 000-2zM13 4a1 1 0 100 2 1 1 0 000-2zM13 9a1 1 0 100 2 1 1 0 000-2zM13 14a1 1 0 100 2 1 1 0 000-2z"></path></svg>
+                                        </span>
+                                        <button onclick="app.toggleTableCollapse('${p.id}')" class="text-green-600 hover:text-green-800 flex-shrink-0">${collapseIcon(pCollapsed)}</button>
+                                        <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                                        <span class="font-medium text-green-800">${p.name}</span>
+                                        <span class="text-xs text-gray-400">${p.startDate || ''} ~ ${p.endDate || ''}</span>
+                                        <span class="text-xs text-green-400">${pTaskCount} 个任务</span>
+                                    </div>
+                                    <div class="flex items-center gap-3">
+                                        <button onclick="app.editProject('${p.id}')" class="text-blue-600 hover:text-blue-700 text-xs font-medium">编辑项目信息</button>
+                                        <button onclick="app.hideProject('${p.id}')" class="text-gray-500 hover:text-gray-700 text-xs font-medium">隐藏</button>
+                                        <button onclick="app.confirmDeleteNode('${p.id}', '项目')" class="text-red-500 hover:text-red-700 text-xs font-medium">删除</button>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    `);
+ 
+                    if (!pCollapsed) {
+                        p.stages.forEach(s => {
+                            s.tasks.forEach((t, tIdx) => {
+                                const stageCell = tIdx === 0
+                                    ? `<td rowspan="${s.tasks.length}" class="align-middle" style="background:${s.color}11;border-left:4px solid ${s.color}">
+                                        <div class="flex items-center gap-2">
+                                            <div class="stage-color-dot-table" style="background:${s.color};width:14px;height:14px;border-radius:50%;cursor:pointer;flex-shrink:0;border:2px solid white;box-shadow:0 0 0 1px ${s.color}" onclick="app.openColorPicker('${s.name.replace(/'/g, "\\'")}', event)" title="点击修改颜色"></div>
+                                            <span class="editable-cell inline-block" data-type="text" data-id="${s.id}" data-field="name" style="color:${s.color};font-weight:600">${s.name}</span>
+                                        </div>
+                                    </td>`
+                                    : '';
+
+                                const taskWorkdays = this.countWorkdays(t.startDate, t.endDate);
+                                rows.push(`
+                                    <tr class="task-row ${t.archived ? 'archived-task-row' : ''}" draggable="true" data-task-id="${t.id}" data-stage-id="${s.id}" data-project-id="${p.id}" data-customer-id="${c.id}">
+                                        ${stageCell}
+                                        <td class="font-medium text-pink-700">
+                                            <div class="flex items-center gap-1.5">
+                                                <span class="drag-handle" title="拖拽排序">
+                                                    <svg class="w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab" fill="currentColor" viewBox="0 0 20 20"><path d="M7 4a1 1 0 100 2 1 1 0 000-2zM7 9a1 1 0 100 2 1 1 0 000-2zM7 14a1 1 0 100 2 1 1 0 000-2zM13 4a1 1 0 100 2 1 1 0 000-2zM13 9a1 1 0 100 2 1 1 0 000-2zM13 14a1 1 0 100 2 1 1 0 000-2z"></path></svg>
+                                                </span>
+                                                <span class="editable-cell inline-block" data-type="text" data-id="${t.id}" data-field="name">${t.name}</span>${taskWorkdays > 0 ? `<span class="workday-count" title="花费工作日数">（${taskWorkdays}）</span>` : ''}${t.workdaysOnly ? `<span class="workday-only-tag" title="仅工作日执行">班</span>` : ''}
+                                            </div>
+                                        </td>
+                                        <td class="editable-cell" data-type="date" data-id="${t.id}" data-field="startDate">${t.startDate}</td>
+                                        <td class="editable-cell" data-type="date" data-id="${t.id}" data-field="endDate">${t.endDate}</td>
+                                        <td class="align-middle">
+                                            <button onclick="app.toggleTaskArchived('${t.id}')" class="task-status-badge ${t.archived ? 'archived' : 'active'}">
+                                                ${t.archived ? '已归档' : '进行中'}
+                                            </button>
+                                        </td>
+                                        <td class="align-middle">
+                                            <button onclick="app.openTaskModal(null, null, '${t.id}')" class="text-green-600 hover:text-green-700 text-xs font-medium">编辑任务</button>
+                                        </td>
+                                        <td class="align-middle">
+                                            <button onclick="app.confirmDeleteNode('${t.id}', '任务')" class="text-red-500 hover:text-red-700 text-xs font-medium">删除</button>
+                                        </td>
+                                    </tr>
+                                `);
+                            });
+                        });
+                    }
+                });
             }
-            i = cEnd;
-        }
+        });
  
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
                     <div>
                         <h2 class="text-lg font-semibold text-gray-800">项目列表</h2>
-                        <p class="text-sm text-gray-500 mt-1">共 ${rows.length} 条记录</p>
+                        <p class="text-sm text-gray-500 mt-1">共 ${totalTasks} 条记录${this.searchKeyword ? ` · 搜索："${this.searchKeyword}"` : ''}</p>
                     </div>
-                    <div class="text-xs text-gray-400">点击单元格可直接编辑 · 拖拽列宽调整大小 · 点击环节色点可改颜色</div>
+                    <div class="flex items-center gap-3">
+                        <button onclick="app.expandAllTableGroups()" class="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100">全部展开</button>
+                        <button onclick="app.collapseAllTableGroups()" class="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100">全部折叠</button>
+                        <span class="text-xs text-gray-400">点击分组头折叠 · 点击单元格编辑 · 拖拽任务行排序或跨环节移动</span>
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="data-table" id="dataTable">
                         <colgroup>
-                            <col style="width:100px"><col style="width:140px"><col style="width:140px"><col style="width:140px"><col style="width:120px"><col style="width:120px"><col style="width:90px"><col style="width:200px"><col style="width:80px">
+                            <col style="width:140px"><col style="width:auto"><col style="width:120px"><col style="width:120px"><col style="width:90px"><col style="width:80px"><col style="width:70px">
                         </colgroup>
                         <thead>
                             <tr>
-                                <th>品牌<div class="col-resizer"></div></th>
-                                <th>项目<div class="col-resizer"></div></th>
                                 <th>环节<div class="col-resizer"></div></th>
                                 <th>任务<div class="col-resizer"></div></th>
                                 <th>开始时间<div class="col-resizer"></div></th>
                                 <th>结束时间<div class="col-resizer"></div></th>
-                                <th>状态<div class="col-resizer"></div></th>
-                                <th>简介<div class="col-resizer"></div></th>
+                                <th>状态</th>
                                 <th>操作</th>
+                                <th>删除</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${rows.map((row, idx) => {
-                                let customerCell = '';
-                                if (customerRowspan[idx]) {
-                                    customerCell = `<td rowspan="${customerRowspan[idx]}" class="merged-cell text-blue-700 align-middle">${row.customer}</td>`;
-                                }
-                                let projectCell = '';
-                                if (projectRowspan[idx]) {
-                                    projectCell = `<td rowspan="${projectRowspan[idx]}" class="merged-cell text-green-700 align-middle">
-                                        <div class="font-medium">${row.project}</div>
-                                    </td>`;
-                                }
-                                let stageCell = '';
-                                if (stageRowspan[idx]) {
-                                    stageCell = `<td rowspan="${stageRowspan[idx]}" class="merged-cell align-middle" style="background:${row.stageColor}11;border-left:4px solid ${row.stageColor}">
-                                        <div class="flex items-center gap-2">
-                                            <div class="stage-color-dot-table" style="background:${row.stageColor};width:14px;height:14px;border-radius:50%;cursor:pointer;flex-shrink:0;border:2px solid white;box-shadow:0 0 0 1px ${row.stageColor}" onclick="app.openColorPicker('${row.stageName.replace(/'/g, "\\'")}', event)" title="点击修改颜色"></div>
-                                            <span class="editable-cell inline-block" data-type="text" data-id="${row.stageId}" data-field="name" style="color:${row.stageColor};font-weight:600">
-                                                ${row.stage}
-                                            </span>
-                                        </div>
-                                    </td>`;
-                                }
-                                let descriptionCell = '';
-                                let actionCell = '';
-                                if (projectRowspan[idx]) {
-                                    descriptionCell = `<td rowspan="${projectRowspan[idx]}" class="max-w-xs text-sm text-gray-500 align-top editable-cell" data-type="textarea" data-id="${row.projectId}" data-field="description">${row.description}</td>`;
-                                    actionCell = `<td rowspan="${projectRowspan[idx]}" class="align-middle">
-                                        ${row.projectId ? `
-                                            <button onclick="app.editProject('${row.projectId}')" class="text-blue-600 hover:text-blue-700 text-sm font-medium">编辑项目</button>
-                                        ` : '-'}
-                                    </td>`;
-                                }
- 
-                                const statusCell = `<td class="align-middle">
-                                    <button onclick="app.toggleTaskArchived('${row.taskId}')" class="task-status-badge ${row.archived ? 'archived' : 'active'}">
-                                        ${row.archived ? '已归档' : '进行中'}
-                                    </button>
-                                </td>`;
- 
-                                return `
-                                    <tr>
-                                        ${customerCell}
-                                        ${projectCell}
-                                        ${stageCell}
-                                        <td class="font-medium text-pink-700 editable-cell" data-type="text" data-id="${row.taskId}" data-field="name">${row.task}</td>
-                                        <td class="editable-cell" data-type="date" data-id="${row.taskId}" data-field="startDate">${row.startDate}</td>
-                                        <td class="editable-cell" data-type="date" data-id="${row.taskId}" data-field="endDate">${row.endDate}</td>
-                                        ${statusCell}
-                                        ${descriptionCell}
-                                        ${actionCell}
-                                    </tr>
-                                `;
-                            }).join('')}
+                            ${rows.length === 0 ? `<tr><td colspan="7" class="text-center text-gray-400 py-12">${this.searchKeyword ? '没有找到匹配的任务' : '暂无任务'}</td></tr>` : rows.join('')}
                         </tbody>
                     </table>
                 </div>
             </div>
+            ${this.renderHiddenBar()}
         `;
     }
  
@@ -844,10 +1394,11 @@ class ProjectManager {
         return this.renderWeekCalendar();
     }
  
-    // 获取周一为起始的日期数组
-    getMonthDates() {
-        const year = this.currentDate.getFullYear();
-        const month = this.currentDate.getMonth();
+    // 获取周一为起始的日期数组（可传入任意月份，默认当前月）
+    getMonthDates(baseDate) {
+        const base = baseDate || this.currentDate;
+        const year = base.getFullYear();
+        const month = base.getMonth();
         const firstDay = new Date(year, month, 1);
         // 转换为周一为起始：getDay() 0=周日, 1=周一, ... 6=周六
         // 转为周一起始：(day + 6) % 7  结果: 0=周一, 1=周二, ... 6=周日
@@ -901,7 +1452,16 @@ class ProjectManager {
                     const color = node.color || '#64748b';
                     (node.children || []).forEach(task => {
                         if (task.type === 'task' && task.startDate) {
-                            if (this.selectedProjectId !== 'all' && project?.id !== this.selectedProjectId) return;
+                            // 多项目筛选：空集合=全部，非空=仅选中项目
+                            if (this.selectedProjectIds.size > 0 && !this.selectedProjectIds.has(project?.id)) return;
+                            // 搜索关键词过滤
+                            if (this.searchKeyword) {
+                                const kw = this.searchKeyword.toLowerCase();
+                                const matchName = task.name.toLowerCase().includes(kw);
+                                const matchProject = (project?.name || '').toLowerCase().includes(kw);
+                                const matchCustomer = (customer?.name || '').toLowerCase().includes(kw);
+                                if (!matchName && !matchProject && !matchCustomer) return;
+                            }
                             tasks.push({
                                 task,
                                 customerName: customer?.name || '-',
@@ -950,56 +1510,222 @@ class ProjectManager {
             if (a.startOffset !== b.startOffset) return a.startOffset - b.startOffset;
             return (b.endOffset - b.startOffset) - (a.endOffset - a.startOffset);
         });
- 
-        // 贪心分配泳道
-        const lanes = []; // 每条泳道记录最后任务的 endOffset
-        const BAR_HEIGHT = 42;
+
+        // 贪心分配泳道；有任务阶段的任务条更高
+        const BASE_BAR_HEIGHT = 42;
         const BAR_GAP = 4;
- 
+        const lanes = []; // { endOffset, maxHeight }
+
+        // 第一遍：贪心分配泳道，记录每条泳道的最大高度
         for (const t of tasks) {
-            let laneIdx = lanes.findIndex(end => end < t.startOffset);
+            const hasPhases = !!(t.task.phases && t.task.phases.some(p => p.name));
+            // 阶段重叠时会分到多条泳道，任务条需按阶段泳道数增高，避免阶段互相遮挡
+            const phaseLaneCount = hasPhases ? this._phaseLanes(t.task).count : 0;
+            t.phaseLaneCount = phaseLaneCount;
+            t.barHeight = BASE_BAR_HEIGHT + (phaseLaneCount > 0 ? phaseLaneCount * this.constructor.PHASE_ROW_H : 0);
+            // 找第一条结束时间早于此任务开始的泳道放入
+            let laneIdx = lanes.findIndex(l => l.endOffset < t.startOffset);
             if (laneIdx === -1) {
                 laneIdx = lanes.length;
-                lanes.push(t.endOffset);
+                lanes.push({ endOffset: t.endOffset, maxHeight: t.barHeight });
             } else {
-                lanes[laneIdx] = t.endOffset;
+                lanes[laneIdx].endOffset = t.endOffset;
+                lanes[laneIdx].maxHeight = Math.max(lanes[laneIdx].maxHeight, t.barHeight);
             }
             t.lane = laneIdx;
         }
- 
-        return { tasks, laneCount: lanes.length, BAR_HEIGHT, BAR_GAP };
+
+        // 第二遍：按泳道实际最大高度累加计算每条泳道的 top（解决高条覆盖下方泳道的问题）
+        let totalHeight = 0;
+        for (let i = 0; i < lanes.length; i++) {
+            lanes[i].top = totalHeight;
+            totalHeight += lanes[i].maxHeight + BAR_GAP;
+        }
+        // 回填每个任务的 laneTop
+        for (const t of tasks) {
+            t.laneTop = lanes[t.lane].top;
+        }
+
+        return { tasks, laneCount: lanes.length, BAR_HEIGHT: BASE_BAR_HEIGHT, BAR_GAP, totalHeight };
     }
  
-    setProjectFilter(projectId) {
-        this.selectedProjectId = projectId;
+    toggleProjectFilter(projectId) {
+        if (projectId === 'all') {
+            this.selectedProjectIds.clear();
+        } else {
+            if (this.selectedProjectIds.has(projectId)) {
+                this.selectedProjectIds.delete(projectId);
+            } else {
+                this.selectedProjectIds.add(projectId);
+            }
+        }
         this.renderAll();
+    }
+
+    // 2.0 项目筛选 UI：多选下拉框 + 常用项目快捷按钮（可增删）
+    renderProjectFilter(projects) {
+        const selectedNames = this.selectedProjectIds.size === 0
+            ? '全部项目'
+            : projects.filter(p => this.selectedProjectIds.has(p.id)).map(p => p.name).join(', ');
+
+        const options = projects.map(p => `
+            <label class="project-multiselect-item" onclick="event.stopPropagation()">
+                <input type="checkbox" value="${p.id}" ${this.selectedProjectIds.has(p.id) ? 'checked' : ''} onchange="app.toggleProjectFilter('${p.id}')">
+                <span>${p.name}</span>
+            </label>
+        `).join('');
+
+        // 常用项目快捷按钮（可增删）
+        const favProjects = projects.filter(p => this.favProjectIds.has(p.id));
+        const favBtns = favProjects.map(p => `
+            <span class="project-fav-chip ${this.selectedProjectIds.has(p.id) ? 'active' : ''}">
+                <span onclick="app.toggleProjectFilter('${p.id}')">${p.name}</span>
+                <button class="project-fav-remove" onclick="event.stopPropagation();app.removeFavProject('${p.id}')" title="移除常用">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </span>
+        `).join('');
+
+        // 添加常用项目下拉
+        const nonFavProjects = projects.filter(p => !this.favProjectIds.has(p.id));
+        const addFavOptions = nonFavProjects.length > 0
+            ? nonFavProjects.map(p => `<div class="project-fav-add-item" onclick="app.addFavProject('${p.id}');event.stopPropagation();">${p.name}</div>`).join('')
+            : '<div class="project-fav-add-empty">所有项目已添加</div>';
+
+        return `
+            <div class="project-filter-bar">
+                <div class="project-multiselect-wrapper">
+                    <div class="project-multiselect-trigger" onclick="this.parentElement.classList.toggle('open')">
+                        <span class="project-multiselect-label">${selectedNames}</span>
+                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </div>
+                    <div class="project-multiselect-dropdown">
+                        <label class="project-multiselect-item" onclick="event.stopPropagation()">
+                            <input type="checkbox" ${this.selectedProjectIds.size === 0 ? 'checked' : ''} onchange="app.toggleProjectFilter('all')">
+                            <span>全部项目</span>
+                        </label>
+                        ${options}
+                    </div>
+                </div>
+                <div class="project-fav-btns">
+                    ${favBtns}
+                    <div class="project-fav-add-wrapper">
+                        <button class="project-fav-add-btn" onclick="this.parentElement.classList.toggle('open');event.stopPropagation();" title="添加常用项目">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        </button>
+                        <div class="project-fav-add-dropdown">${addFavOptions}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // 2.0 搜索输入（防抖，只渲染主视图不渲染树）
+    onSearchInput(value) {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => {
+            this.searchKeyword = value.trim();
+            this.renderMain();
+        }, 200);
+    }
+
+    // 2.0 表格视图折叠/展开
+    toggleTableCollapse(nodeId) {
+        if (this.tableCollapsed.has(nodeId)) {
+            this.tableCollapsed.delete(nodeId);
+        } else {
+            this.tableCollapsed.add(nodeId);
+        }
+        this.renderMain();
+    }
+
+    // 2.0 折叠所有表格分组
+    collapseAllTableGroups() {
+        const walk = (nodes) => {
+            nodes.forEach(node => {
+                if (node.type === 'customer' || node.type === 'project') {
+                    this.tableCollapsed.add(node.id);
+                }
+                if (node.children) walk(node.children);
+            });
+        };
+        walk(this.data);
+        this.renderMain();
+    }
+
+    // 2.0 展开所有表格分组
+    expandAllTableGroups() {
+        this.tableCollapsed.clear();
+        this.renderMain();
     }
  
     renderMonthCalendar() {
-        const year = this.currentDate.getFullYear();
-        const month = this.currentDate.getMonth();
-        const dates = this.getMonthDates();
-        const weeks = [];
-        for (let i = 0; i < 6; i++) {
-            weeks.push(dates.slice(i * 7, i * 7 + 7));
-        }
- 
-        const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
+        const anchor = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
+        const months = [this._addMonths(anchor, -1), anchor, this._addMonths(anchor, 1)];
         const today = new Date();
-        const allTasks = this.collectTasks();
+        const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
         const projects = this.getProjectsList();
  
-        // 项目筛选 Tab
-        const filterTabs = `<div class="project-filter-tabs">
-            <div class="project-filter-tab ${this.selectedProjectId === 'all' ? 'active' : ''}" onclick="app.setProjectFilter('all')">全部项目</div>
-            ${projects.map(p => `<div class="project-filter-tab ${this.selectedProjectId === p.id ? 'active' : ''}" onclick="app.setProjectFilter('${p.id}')">${p.name}</div>`).join('')}
-        </div>`;
+        // 项目筛选 UI（多选下拉 + 常用快捷按钮）
+        const filterTabs = this.renderProjectFilter(projects);
  
         const header = weekDayNames.map(d =>
             `<div class="calendar-header-cell">${d}</div>`
         ).join('');
  
-        const rows = weeks.map((week) => {
+        // 连续滑动：上月 / 当前月 / 下月 三段堆叠在同一条纵向滚动轨道上
+        const blocks = months.map(m => this._renderMonthBlock(m, today)).join('');
+ 
+        return `
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div class="calendar-nav">
+                    <button onclick="app.prevMonth()" class="calendar-nav-btn">上月</button>
+                    <button onclick="app.goToday()" class="calendar-nav-btn">今天</button>
+                    <button onclick="app.nextMonth()" class="calendar-nav-btn">下月</button>
+                    <h2 class="calendar-title" id="calendarTitle">${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月</h2>
+                    <div class="ml-auto flex items-center gap-3">
+                        <span class="text-xs text-gray-400">滚轮/触控板连续滑动切换月份 · 拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
+                        <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                            新增任务
+                        </button>
+                    </div>
+                </div>
+                ${filterTabs}
+                <div class="calendar-header">${header}</div>
+                <div class="calendar-scroll-area">
+                    <div class="calendar-month-rail" id="calendarGrid">
+                        ${blocks}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+ 
+    // 单个自然月的日历块（月份标签 + 6 周网格）
+    _renderMonthBlock(monthDate, today) {
+        const year = monthDate.getFullYear();
+        const month = monthDate.getMonth();
+        const dates = this.getMonthDates(monthDate);
+        const allTasks = this.collectTasks();
+ 
+        const rows = [];
+        for (let i = 0; i < 6; i++) {
+            rows.push(this._renderMonthWeekRow(dates.slice(i * 7, i * 7 + 7), month, today, allTasks));
+        }
+ 
+        return `
+            <div class="calendar-month-block" data-month="${year}-${String(month + 1).padStart(2, '0')}">
+                <div class="calendar-month-label">${year}年 ${month + 1}月</div>
+                <div class="calendar-grid">
+                    ${rows.join('')}
+                </div>
+            </div>
+        `;
+    }
+ 
+    // 单周行（日期格 + 跨天任务条）
+    _renderMonthWeekRow(week, month, today, allTasks) {
             const weekStart = week[0];
             const weekStartMidnight = new Date(weekStart);
             weekStartMidnight.setHours(0, 0, 0, 0);
@@ -1012,8 +1738,10 @@ class ProjectManager {
                 return tStart <= weekEnd && tEnd >= weekStartMidnight;
             });
  
-            const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
-            const weekHeight = Math.max(110, 40 + laneCount * (BAR_HEIGHT + BAR_GAP));
+            const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP, totalHeight } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
+            // 移动端压缩行高，减少纵向滚动
+            const baseRowH = this.isMobile() ? 78 : 110;
+            const weekHeight = Math.max(baseRowH, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
  
             const dayCells = week.map((d) => {
                 const isToday = this.isSameDay(d, today);
@@ -1022,29 +1750,64 @@ class ProjectManager {
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                 const holidayName = this.getHolidayName(d);
                 const isHoliday = !!holidayName;
-                return `<div class="calendar-day ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''}">
+                const isRest = this.isRestDay(d);
+                const dateStr = this.formatDateISO(d);
+                const isMakeup = this._2026MakeupWorkdays.has(dateStr);
+                const restTag = isMakeup ? '<span class="calendar-day-tag tag-work">班</span>'
+                    : (isRest && !isWeekend && !isHoliday) ? '<span class="calendar-day-tag tag-rest">休</span>' : '';
+                return `<div class="calendar-day ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''} ${isRest && !isMakeup ? 'rest-day' : ''} ${isMakeup ? 'makeup-day' : ''}">
                     <div class="calendar-day-header">
-                        <div class="calendar-day-number" ${isHoliday ? `title="${holidayName}"` : ''}>${d.getDate()}</div>
+                        <div class="calendar-day-number" ${isHoliday ? `title="${holidayName}"` : ''}>${d.getDate()}${restTag}</div>
                         ${isHoliday ? `<span class="calendar-holiday-tag">${holidayName}</span>` : ''}
                     </div>
                 </div>`;
             }).join('');
  
             const taskBars = layoutTasks.map(t => {
-                const left = (t.startOffset / 7) * 100;
-                const width = ((t.endOffset - t.startOffset + 1) / 7) * 100;
-                const top = t.lane * (BAR_HEIGHT + BAR_GAP);
+                const top = t.laneTop != null ? t.laneTop : t.lane * (BAR_HEIGHT + BAR_GAP);
+                const barH = t.barHeight || BAR_HEIGHT;
                 const c = t.stageColor;
                 const isArchived = t.task.archived;
- 
-                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''}" data-event-id="${t.task.id}"
-                    style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
-                    <div class="bar-title">${t.task.name}</div>
-                    <div class="bar-meta">${t.projectName} · ${t.stageName}</div>
-                    <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
-                </div>`;
+                const taskStart = this.parseDate(t.task.startDate);
+                const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
+                const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
+                const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
+                const hasPhases = !!(t.task.phases && t.task.phases.some(p => p.name));
+
+                // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
+                const segments = t.task.workdaysOnly
+                    ? this._workdaySegmentsInWeek(taskStart, taskEnd, weekStartMidnight)
+                    : [{ startOffset: t.startOffset, endOffset: t.endOffset }];
+
+                if (segments.length === 0) return '';
+
+                return segments.map(seg => {
+                    const left = (seg.startOffset / 7) * 100;
+                    const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
+                    // 计算阶段迷你条在该段内的位置（相对任务条百分比）
+                    const phasePositions = hasPhases
+                        ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
+                        : [];
+                    const phaseBarsHtml = phasePositions.length ? (() => {
+                        const rowH = this.constructor.PHASE_ROW_H;
+                        const maxLane = Math.max(...phasePositions.map(x => x.lane || 0));
+                        const areaH = (maxLane + 1) * rowH;
+                        const bars = phasePositions.map(p => {
+                            const phDone = p.phase.done === true;
+                            return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;top:${(p.lane || 0) * rowH}px;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
+                        }).join('');
+                        return `<div class="bar-phases" style="height:${areaH}px">${bars}</div>`;
+                    })() : '';
+                    return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
+                        style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
+                        <div class="bar-title">${nameWithDays}</div>
+                        ${phaseBarsHtml}
+                        <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
+                        <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
+                    </div>`;
+                }).join('');
             }).join('');
- 
+
             return `
                 <div class="calendar-week-row" style="min-height:${weekHeight}px">
                     ${dayCells}
@@ -1053,32 +1816,85 @@ class ProjectManager {
                     </div>
                 </div>
             `;
-        }).join('');
+    }
  
-        return `
-            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div class="calendar-nav">
-                    <button onclick="app.prevMonth()" class="calendar-nav-btn">上月</button>
-                    <button onclick="app.goToday()" class="calendar-nav-btn">今天</button>
-                    <button onclick="app.nextMonth()" class="calendar-nav-btn">下月</button>
-                    <h2 class="calendar-title">${year}年 ${month + 1}月</h2>
-                    <div class="ml-auto flex items-center gap-3">
-                        <span class="text-xs text-gray-400">拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
-                        <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                            新增任务
-                        </button>
-                    </div>
-                </div>
-                ${filterTabs}
-                <div class="calendar-scroll-area">
-                    <div class="calendar-header">${header}</div>
-                    <div class="calendar-grid" id="calendarGrid">
-                        ${rows}
-                    </div>
-                </div>
-            </div>
-        `;
+    // ---------- 月份轨道：连续滚动切换月份 ----------
+ 
+    _addMonths(date, n) {
+        return new Date(date.getFullYear(), date.getMonth() + n, 1);
+    }
+ 
+    _parseMonthISO(str) {
+        if (!str) return null;
+        const [y, m] = str.split('-').map(Number);
+        return new Date(y, m - 1, 1);
+    }
+ 
+    _updateCalendarTitle(anchor) {
+        const el = document.getElementById('calendarTitle');
+        if (el) el.textContent = `${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月`;
+    }
+ 
+    // 轨道滚动：实时更新标题；接近轨道边缘时重排轨道，实现上下无限续接
+    _onCalRailScroll(scrollArea) {
+        if (this._calRecenterLock) return;
+        const rail = scrollArea.querySelector('.calendar-month-rail');
+        if (!rail || rail.children.length < 3) return;
+        const st = scrollArea.scrollTop;
+        const blocks = Array.from(rail.children);
+        let topIdx = blocks.length - 1;
+        for (let i = 0; i < blocks.length; i++) {
+            if (blocks[i].offsetTop + blocks[i].offsetHeight > st + 2) { topIdx = i; break; }
+        }
+        const topAnchor = this._parseMonthISO(blocks[topIdx].dataset.month);
+        if (topAnchor) {
+            this.currentDate = topAnchor;
+            this._updateCalendarTitle(topAnchor);
+        }
+        // 按钮平滑滚动动画进行中不重排，等动画结束后再续接
+        if (this._calRailAnimating) return;
+
+        // 仅在上/下边缘留出空间时重排，避免滚到轨道尽头后卡住
+        const margin = Math.max(60, scrollArea.clientHeight);
+        let anchorBlock = null;
+        if (topIdx === 0 && st < margin) {
+            anchorBlock = blocks[0];                        // 向上续接
+        } else if (topIdx === blocks.length - 1) {
+            anchorBlock = blocks[blocks.length - 1];        // 向下续接
+        }
+        if (!anchorBlock) return;
+
+        const now = Date.now();
+        if (now - (this._lastCalRecenterAt || 0) < 100) return;
+        this._lastCalRecenterAt = now;
+
+        const anchor = this._parseMonthISO(anchorBlock.dataset.month);
+        // 记录锚点月相对视口的偏移，重排后精确还原，做到无跳动
+        this._pendingRailRestore = { viewportY: anchorBlock.offsetTop - st };
+        if (anchor) this.currentDate = anchor;
+        this._calRecenterLock = true;
+        this.renderMain();
+        requestAnimationFrame(() => { this._calRecenterLock = false; });
+    }
+
+    // 上月/下月按钮：在已渲染的轨道上平滑滚动到相邻月份
+    _scrollCalRailBy(dir) {
+        const sc = document.querySelector('.calendar-scroll-area');
+        if (!sc) return false;
+        const rail = sc.querySelector('.calendar-month-rail');
+        if (!rail || rail.children.length < 3) return false;
+        const target = rail.children[dir < 0 ? 0 : 2];
+        if (!target) return false;
+        this._calRailAnimating = true;
+        sc.scrollTo({ top: target.offsetTop, behavior: 'smooth' });
+        // 动画结束后再触发一次边缘重排，保证下一次点击仍有可滚动的月份
+        clearTimeout(this._calRailAnimTimer);
+        this._calRailAnimTimer = setTimeout(() => {
+            this._calRailAnimating = false;
+            const cur = document.querySelector('.calendar-scroll-area');
+            if (cur) this._onCalRailScroll(cur);
+        }, 700);
+        return true;
     }
  
     renderWeekCalendar() {
@@ -1099,13 +1915,12 @@ class ProjectManager {
             return tStart <= weekEnd && tEnd >= weekStartMidnight;
         });
  
-        const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
-        const weekHeight = Math.max(220, 40 + laneCount * (BAR_HEIGHT + BAR_GAP));
+        const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP, totalHeight } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
+        // 移动端压缩周视图高度
+        const baseWeekH = this.isMobile() ? 160 : 220;
+        const weekHeight = Math.max(baseWeekH, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
  
-        const filterTabs = `<div class="project-filter-tabs">
-            <div class="project-filter-tab ${this.selectedProjectId === 'all' ? 'active' : ''}" onclick="app.setProjectFilter('all')">全部项目</div>
-            ${projects.map(p => `<div class="project-filter-tab ${this.selectedProjectId === p.id ? 'active' : ''}" onclick="app.setProjectFilter('${p.id}')">${p.name}</div>`).join('')}
-        </div>`;
+        const filterTabs = this.renderProjectFilter(projects);
  
         const header = weekDayNames.map((d, i) => {
             const isToday = this.isSameDay(dates[i], today);
@@ -1121,26 +1936,62 @@ class ProjectManager {
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
             const holidayName = this.getHolidayName(d);
             const isHoliday = !!holidayName;
-            return `<div class="week-day-cell ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''}">
+            const isRest = this.isRestDay(d);
+            const dateStr = this.formatDateISO(d);
+            const isMakeup = this._2026MakeupWorkdays.has(dateStr);
+            const restTag = isMakeup ? '<span class="calendar-day-tag tag-work">班</span>'
+                : (isRest && !isWeekend && !isHoliday) ? '<span class="calendar-day-tag tag-rest">休</span>' : '';
+            return `<div class="week-day-cell ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isHoliday ? 'holiday' : ''} ${isRest && !isMakeup ? 'rest-day' : ''} ${isMakeup ? 'makeup-day' : ''}">
+                <div class="text-xs">${restTag}</div>
                 ${isHoliday ? `<div class="calendar-holiday-tag" style="margin-top:2px">${holidayName}</div>` : ''}
             </div>`;
         }).join('');
  
         const taskBars = layoutTasks.map(t => {
-            const left = (t.startOffset / 7) * 100;
-            const width = ((t.endOffset - t.startOffset + 1) / 7) * 100;
-            const top = t.lane * (BAR_HEIGHT + BAR_GAP);
+            const top = t.laneTop != null ? t.laneTop : t.lane * (BAR_HEIGHT + BAR_GAP);
+            const barH = t.barHeight || BAR_HEIGHT;
             const c = t.stageColor;
             const isArchived = t.task.archived;
- 
-            return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''}" data-event-id="${t.task.id}"
-                style="left:${left}%;width:${width}%;top:${top}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
-                <div class="bar-title">${t.task.name}</div>
-                <div class="bar-meta">${t.projectName} · ${t.stageName}</div>
-                <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
-            </div>`;
+            const taskStart = this.parseDate(t.task.startDate);
+            const taskEnd = this.parseDate(t.task.endDate || t.task.startDate);
+            const taskDays = this.countWorkdays(t.task.startDate, t.task.endDate);
+            const nameWithDays = `${t.task.name}${taskDays > 0 ? `（${taskDays}）` : ''}`;
+            const hasPhases = !!(t.task.phases && t.task.phases.some(p => p.name));
+
+            // 仅工作日执行：按工作日连续段分段渲染，跳过休息日
+            const segments = t.task.workdaysOnly
+                ? this._workdaySegmentsInWeek(taskStart, taskEnd, weekStartMidnight)
+                : [{ startOffset: t.startOffset, endOffset: t.endOffset }];
+
+            if (segments.length === 0) return '';
+
+            return segments.map(seg => {
+                const left = (seg.startOffset / 7) * 100;
+                const width = ((seg.endOffset - seg.startOffset + 1) / 7) * 100;
+                // 计算阶段迷你条在该段内的位置（相对任务条百分比）
+                const phasePositions = hasPhases
+                    ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
+                    : [];
+                const phaseBarsHtml = phasePositions.length ? (() => {
+                    const rowH = this.constructor.PHASE_ROW_H;
+                    const maxLane = Math.max(...phasePositions.map(x => x.lane || 0));
+                    const areaH = (maxLane + 1) * rowH;
+                    const bars = phasePositions.map(p => {
+                        const phDone = p.phase.done === true;
+                        return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;top:${(p.lane || 0) * rowH}px;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
+                    }).join('');
+                    return `<div class="bar-phases" style="height:${areaH}px">${bars}</div>`;
+                })() : '';
+                return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
+                    style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
+                    <div class="bar-title">${nameWithDays}</div>
+                    ${phaseBarsHtml}
+                    <div class="bar-meta">${t.projectName} · ${t.stageName}${t.task.workdaysOnly ? ' · 仅工作日' : ''}</div>
+                    <div class="bar-resize-handle" data-event-id="${t.task.id}"></div>
+                </div>`;
+            }).join('');
         }).join('');
- 
+
         const title = `${dates[0].getFullYear()}年 ${dates[0].getMonth() + 1}月${dates[0].getDate()}日 - ${dates[6].getMonth() + 1}月${dates[6].getDate()}日`;
  
         return `
@@ -1174,6 +2025,8 @@ class ProjectManager {
         `;
     }
  
+    // ---------- 归档视图（2.0 优化：搜索 + 批量恢复 + 排序）----------
+ 
     renderArchiveView() {
         const archivedTasks = [];
         const walk = (nodes, path = []) => {
@@ -1191,7 +2044,8 @@ class ProjectManager {
                         stage: stage?.name || '-',
                         stageColor: stage?.color || '#94a3b8',
                         startDate: node.startDate || '-',
-                        endDate: node.endDate || '-'
+                        endDate: node.endDate || '-',
+                        archivedAt: node.archivedAt || null
                     });
                 }
                 if (node.children?.length) {
@@ -1201,37 +2055,78 @@ class ProjectManager {
         };
         walk(this.data);
  
+        // 搜索过滤
+        let filtered = archivedTasks;
+        if (this.archiveSearchKeyword) {
+            const kw = this.archiveSearchKeyword.toLowerCase();
+            filtered = archivedTasks.filter(t =>
+                t.task.toLowerCase().includes(kw) ||
+                t.customer.toLowerCase().includes(kw) ||
+                t.project.toLowerCase().includes(kw)
+            );
+        }
+ 
+        // 排序
+        filtered.sort((a, b) => {
+            if (this.archiveSortBy === 'endDate') {
+                return (b.endDate || '').localeCompare(a.endDate || '');
+            } else if (this.archiveSortBy === 'startDate') {
+                return (b.startDate || '').localeCompare(a.startDate || '');
+            } else if (this.archiveSortBy === 'archivedAt') {
+                return (b.archivedAt || '').localeCompare(a.archivedAt || '');
+            } else if (this.archiveSortBy === 'task') {
+                return a.task.localeCompare(b.task, 'zh');
+            } else if (this.archiveSortBy === 'customer') {
+                return a.customer.localeCompare(b.customer, 'zh');
+            }
+            return 0;
+        });
+
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center mb-4">
                     <div>
                         <h2 class="text-lg font-semibold text-gray-800">归档任务</h2>
-                        <p class="text-sm text-gray-500 mt-1">共 ${archivedTasks.length} 条已归档记录</p>
+                        <p class="text-sm text-gray-500 mt-1">共 ${filtered.length} 条已归档记录${this.archiveSearchKeyword ? ` · 搜索："${this.archiveSearchKeyword}"` : ''}</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <input type="text" id="archiveSearchInput" value="${this.archiveSearchKeyword}" oninput="app.onArchiveSearchInput(this.value)" placeholder="搜索归档任务..." class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-48">
+                        <select id="archiveSortSelect" onchange="app.setArchiveSort(this.value)" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                            <option value="archivedAt" ${this.archiveSortBy === 'archivedAt' ? 'selected' : ''}>按归档时间</option>
+                            <option value="endDate" ${this.archiveSortBy === 'endDate' ? 'selected' : ''}>按结束时间</option>
+                            <option value="startDate" ${this.archiveSortBy === 'startDate' ? 'selected' : ''}>按开始时间</option>
+                            <option value="task" ${this.archiveSortBy === 'task' ? 'selected' : ''}>按任务名</option>
+                            <option value="customer" ${this.archiveSortBy === 'customer' ? 'selected' : ''}>按品牌</option>
+                        </select>
+                        ${filtered.length > 0 ? `<button onclick="app.batchRestoreArchived()" class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors">批量恢复</button>` : ''}
                     </div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="data-table" id="archiveTable">
                         <colgroup>
-                            <col style="width:140px"><col style="width:140px"><col style="width:120px"><col style="width:200px"><col style="width:120px"><col style="width:120px"><col style="width:100px">
+                            <col style="width:40px"><col style="width:120px"><col style="width:140px"><col style="width:120px"><col style="width:200px"><col style="width:110px"><col style="width:110px"><col style="width:140px"><col style="width:100px">
                         </colgroup>
                         <thead>
                             <tr>
+                                <th><input type="checkbox" id="archiveSelectAll" onchange="app.toggleArchiveSelectAll(this.checked)" class="rounded text-blue-600 focus:ring-blue-500"></th>
                                 <th>品牌</th>
                                 <th>项目</th>
                                 <th>环节</th>
                                 <th>任务</th>
                                 <th>开始时间</th>
                                 <th>结束时间</th>
+                                <th>归档时间</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${archivedTasks.length === 0 ? `
+                            ${filtered.length === 0 ? `
                                 <tr>
-                                    <td colspan="7" class="text-center text-gray-400 py-12">暂无已归档任务</td>
+                                    <td colspan="9" class="text-center text-gray-400 py-12">${this.archiveSearchKeyword ? '没有找到匹配的归档任务' : '暂无已归档任务'}</td>
                                 </tr>
-                            ` : archivedTasks.map(row => `
+                            ` : filtered.map(row => `
                                 <tr>
+                                    <td><input type="checkbox" class="archive-checkbox" value="${row.taskId}" class="rounded text-blue-600"></td>
                                     <td class="text-blue-700 font-medium">${row.customer}</td>
                                     <td class="text-green-700 font-medium">${row.project}</td>
                                     <td>
@@ -1243,6 +2138,7 @@ class ProjectManager {
                                     <td class="font-medium text-pink-700">${row.task}</td>
                                     <td>${row.startDate}</td>
                                     <td>${row.endDate}</td>
+                                    <td class="text-gray-500 text-xs">${this.formatDateTime(row.archivedAt)}</td>
                                     <td>
                                         <button onclick="app.toggleTaskArchived('${row.taskId}')" class="text-blue-600 hover:text-blue-700 text-sm font-medium">恢复</button>
                                     </td>
@@ -1255,6 +2151,50 @@ class ProjectManager {
         `;
     }
  
+    // 2.0 归档搜索
+    onArchiveSearchInput(value) {
+        clearTimeout(this._archiveSearchTimer);
+        this._archiveSearchTimer = setTimeout(() => {
+            this.archiveSearchKeyword = value.trim();
+            this.renderMain();
+        }, 200);
+    }
+ 
+    // 2.0 归档排序
+    setArchiveSort(field) {
+        this.archiveSortBy = field;
+        this.renderMain();
+    }
+ 
+    // 2.0 归档全选/取消全选
+    toggleArchiveSelectAll(checked) {
+        document.querySelectorAll('.archive-checkbox').forEach(cb => cb.checked = checked);
+    }
+ 
+    // 2.0 批量恢复
+    batchRestoreArchived() {
+        const selected = [];
+        document.querySelectorAll('.archive-checkbox:checked').forEach(cb => selected.push(cb.value));
+        if (selected.length === 0) {
+            alert('请先勾选要恢复的任务');
+            return;
+        }
+        if (!confirm(`确定恢复 ${selected.length} 个任务？`)) return;
+        selected.forEach(id => {
+            const task = this.findNode(id);
+            if (task && task.type === 'task') {
+                task.archived = false;
+                task.archivedAt = null;
+            }
+        });
+        this.renderAll();
+    }
+ 
+    // 2.0 归档视图交互初始化
+    initArchiveInteractions() {
+        // 目前无需额外初始化，事件通过 onclick 内联绑定
+    }
+ 
     addNewTask() {
         const today = new Date();
         const startDate = this.formatDateISO(today);
@@ -1264,11 +2204,14 @@ class ProjectManager {
     // ---------- 日历导航 ----------
  
     prevMonth() {
+        // 月视图：在已渲染的轨道上平滑滑到上一个月，保持连续滑动体验
+        if (this.calendarType === 'month' && this._scrollCalRailBy(-1)) return;
         this.currentDate.setMonth(this.currentDate.getMonth() - 1);
         this.renderMain();
     }
- 
+
     nextMonth() {
+        if (this.calendarType === 'month' && this._scrollCalRailBy(1)) return;
         this.currentDate.setMonth(this.currentDate.getMonth() + 1);
         this.renderMain();
     }
@@ -1341,15 +2284,108 @@ class ProjectManager {
         }
         this.closeInputModal();
     }
+
+    // ---------- 环节模态框 ----------
+
+    // 预设颜色
+    _stageColorPresets = ['#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#ef4444', '#64748b'];
+
+    openStageModal(stageId = null, parentId = null) {
+        // stageId 有值 = 编辑环节；parentId 有值 = 新建环节
+        this._stageModalData = { stageId, parentId };
+
+        const presets = this._stageColorPresets.map(c =>
+            `<button class="stage-color-preset" style="background:${c}" onclick="document.getElementById('stageColorInput').value='${c}';this.parentElement.querySelectorAll('.stage-color-preset').forEach(b=>b.classList.remove('selected'));this.classList.add('selected')" title="${c}"></button>`
+        ).join('');
+
+        document.getElementById('stageColorPresets').innerHTML = presets;
+
+        if (stageId) {
+            // 编辑环节
+            const node = this.findNode(stageId);
+            if (!node) return;
+            document.getElementById('stageModalTitle').textContent = '编辑环节';
+            document.getElementById('stageNameInput').value = node.name;
+            document.getElementById('stageColorInput').value = node.color || '#3b82f6';
+            // 高亮当前颜色
+            const currentColor = (node.color || '#3b82f6').toLowerCase();
+            setTimeout(() => {
+                document.querySelectorAll('.stage-color-preset').forEach(b => {
+                    if (b.style.backgroundColor === currentColor || b.title === currentColor) {
+                        b.classList.add('selected');
+                    }
+                });
+            }, 0);
+        } else {
+            // 新建环节
+            document.getElementById('stageModalTitle').textContent = '新建环节';
+            document.getElementById('stageNameInput').value = '';
+            document.getElementById('stageColorInput').value = '#3b82f6';
+        }
+
+        document.getElementById('stageModal').classList.remove('hidden');
+        document.getElementById('stageModal').classList.add('flex');
+        setTimeout(() => document.getElementById('stageNameInput').focus(), 100);
+    }
+
+    closeStageModal() {
+        document.getElementById('stageModal').classList.add('hidden');
+        document.getElementById('stageModal').classList.remove('flex');
+        this._stageModalData = null;
+    }
+
+    saveStageModal() {
+        const name = document.getElementById('stageNameInput').value.trim();
+        const color = document.getElementById('stageColorInput').value;
+        if (!name) { alert('请输入环节名称'); return; }
+
+        const { stageId, parentId } = this._stageModalData;
+
+        if (stageId) {
+            // 编辑环节
+            const node = this.findNode(stageId);
+            if (node) {
+                node.name = name;
+                node.color = color;
+            }
+        } else if (parentId) {
+            // 新建环节
+            const parent = this.findNode(parentId);
+            if (parent) {
+                const newNode = {
+                    id: this.generateId(),
+                    type: 'stage',
+                    name,
+                    color,
+                    children: []
+                };
+                parent.children = parent.children || [];
+                parent.children.push(newNode);
+                this.expandedNodes.add(parentId);
+            }
+        }
+
+        this.closeStageModal();
+        this.renderAll();
+    }
  
     // ---------- 侧栏折叠/展开 ----------
- 
+
+    // 是否移动端（与 style.css 断点保持一致）
+    isMobile() {
+        return !!(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+    }
+
     toggleSidebar() {
+        if (this.isMobile()) {
+            this.setSidebarDrawer(!document.getElementById('sidebar').classList.contains('mobile-open'));
+            return;
+        }
         this.sidebarCollapsed = !this.sidebarCollapsed;
         const sidebar = document.getElementById('sidebar');
         const handle = document.getElementById('resizeHandle');
         const expandBtn = document.getElementById('sidebarExpandBtn');
- 
+
         if (this.sidebarCollapsed) {
             sidebar.classList.add('collapsed');
             handle.classList.add('collapsed');
@@ -1360,6 +2396,19 @@ class ProjectManager {
             handle.classList.remove('collapsed');
             expandBtn.classList.add('hidden');
         }
+    }
+
+    // 移动端侧栏抽屉开关
+    setSidebarDrawer(open) {
+        const sidebar = document.getElementById('sidebar');
+        const backdrop = document.getElementById('sidebarBackdrop');
+        if (!sidebar) return;
+        sidebar.classList.toggle('mobile-open', !!open);
+        if (backdrop) backdrop.classList.toggle('show', !!open);
+    }
+
+    closeSidebarDrawer() {
+        this.setSidebarDrawer(false);
     }
  
     // ---------- 侧栏拖拽调节宽度 ----------
@@ -1492,6 +2541,221 @@ class ProjectManager {
                 });
             });
         });
+
+        // 2.0 行拖拽排序
+        this.initRowDragSort(table);
+        // 项目分组头拖拽排序
+        this.initProjectDragSort(table);
+    }
+
+    // 项目拖拽排序（仅同一客户下的项目可互相排序）
+    initProjectDragSort(table) {
+        const projectRows = table.querySelectorAll('.project-header-row');
+        if (projectRows.length === 0) return;
+
+        let dragSrcRow = null;
+        let dragSrcProjectId = null;
+        let dragSrcCustomerId = null;
+
+        projectRows.forEach(row => {
+            // dragstart
+            row.addEventListener('dragstart', (e) => {
+                // 从按钮、可编辑单元格发起时取消拖拽
+                if (e.target.closest('button') || e.target.closest('.editable-cell')) {
+                    e.preventDefault();
+                    return;
+                }
+                dragSrcRow = row;
+                dragSrcProjectId = row.dataset.project;
+                dragSrcCustomerId = row.dataset.customer;
+                row.classList.add('dragging-row');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', dragSrcProjectId);
+            });
+
+            // dragend
+            row.addEventListener('dragend', () => {
+                row.classList.remove('dragging-row');
+                table.querySelectorAll('.project-header-row.drag-over-top, .project-header-row.drag-over-bottom').forEach(r => {
+                    r.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+                dragSrcRow = null;
+                dragSrcProjectId = null;
+                dragSrcCustomerId = null;
+            });
+
+            // dragover
+            row.addEventListener('dragover', (e) => {
+                if (!dragSrcRow || row === dragSrcRow) return;
+                // 仅同一客户下的项目可排序
+                if (row.dataset.customer !== dragSrcCustomerId) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+                if (e.clientY < midY) {
+                    row.classList.add('drag-over-top');
+                } else {
+                    row.classList.add('drag-over-bottom');
+                }
+            });
+
+            // dragleave
+            row.addEventListener('dragleave', () => {
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+            });
+
+            // drop
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (!dragSrcProjectId || !dragSrcCustomerId) return;
+                const targetProjectId = row.dataset.project;
+                const targetCustomerId = row.dataset.customer;
+                if (targetProjectId === dragSrcProjectId) return;
+                // 仅同一客户可排序
+                if (targetCustomerId !== dragSrcCustomerId) return;
+
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                const insertBefore = e.clientY < midY;
+
+                this.moveProject(dragSrcProjectId, targetProjectId, insertBefore);
+            });
+        });
+    }
+
+    // 移动项目到新位置（同一客户内重排）
+    moveProject(srcProjectId, targetProjectId, insertBefore) {
+        const srcProject = this.findNode(srcProjectId);
+        const targetProject = this.findNode(targetProjectId);
+        if (!srcProject || !targetProject) return;
+
+        const customer = this.findParent(srcProjectId);
+        if (!customer || customer.id !== this.findParent(targetProjectId)?.id) return;
+        if (!customer.children) return;
+
+        // 从原位置移除
+        customer.children = customer.children.filter(c => c.id !== srcProjectId);
+
+        // 找到目标位置并插入
+        const targetIdx = customer.children.findIndex(c => c.id === targetProjectId);
+        if (targetIdx === -1) {
+            customer.children.push(srcProject);
+        } else {
+            const insertIdx = insertBefore ? targetIdx : targetIdx + 1;
+            customer.children.splice(insertIdx, 0, srcProject);
+        }
+
+        this.renderAll();
+    }
+
+    // 2.0 行拖拽排序
+    initRowDragSort(table) {
+        let dragSrcRow = null;
+        let dragSrcTaskId = null;
+        let dragSrcStageId = null;
+
+        const taskRows = table.querySelectorAll('.task-row');
+
+        taskRows.forEach(row => {
+            // dragstart
+            row.addEventListener('dragstart', (e) => {
+                // 如果从可编辑单元格或按钮发起，取消拖拽
+                if (e.target.closest('.editable-cell.editing') || e.target.closest('button')) {
+                    e.preventDefault();
+                    return;
+                }
+                dragSrcRow = row;
+                dragSrcTaskId = row.dataset.taskId;
+                dragSrcStageId = row.dataset.stageId;
+                row.classList.add('dragging-row');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', dragSrcTaskId);
+            });
+
+            // dragend
+            row.addEventListener('dragend', () => {
+                row.classList.remove('dragging-row');
+                table.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(r => {
+                    r.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+                dragSrcRow = null;
+                dragSrcTaskId = null;
+                dragSrcStageId = null;
+            });
+
+            // dragover
+            row.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (!dragSrcRow || row === dragSrcRow) return;
+
+                // 判断鼠标在行的上半还是下半
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+                if (e.clientY < midY) {
+                    row.classList.add('drag-over-top');
+                } else {
+                    row.classList.add('drag-over-bottom');
+                }
+            });
+
+            // dragleave
+            row.addEventListener('dragleave', () => {
+                row.classList.remove('drag-over-top', 'drag-over-bottom');
+            });
+
+            // drop
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (!dragSrcTaskId || !dragSrcStageId) return;
+                const targetTaskId = row.dataset.taskId;
+                const targetStageId = row.dataset.stageId;
+                if (targetTaskId === dragSrcTaskId) return;
+
+                // 判断插入位置（前/后）
+                const rect = row.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                const insertBefore = e.clientY < midY;
+
+                this.moveTask(dragSrcTaskId, dragSrcStageId, targetTaskId, targetStageId, insertBefore);
+            });
+        });
+    }
+
+    // 2.0 移动任务到新位置
+    moveTask(taskId, fromStageId, targetTaskId, toStageId, insertBefore) {
+        const task = this.findNode(taskId);
+        if (!task) return;
+
+        // 从原环节移除
+        const fromStage = this.findNode(fromStageId);
+        if (fromStage && fromStage.children) {
+            fromStage.children = fromStage.children.filter(c => c.id !== taskId);
+        }
+
+        // 添加到目标环节
+        const toStage = this.findNode(toStageId);
+        if (!toStage) return;
+        toStage.children = toStage.children || [];
+
+        const targetIdx = toStage.children.findIndex(c => c.id === targetTaskId);
+        if (targetIdx === -1) {
+            // 目标不存在，追加到末尾
+            toStage.children.push(task);
+        } else {
+            // 插入到目标前或后
+            const insertIdx = insertBefore ? targetIdx : targetIdx + 1;
+            toStage.children.splice(insertIdx, 0, task);
+        }
+
+        // 如果跨了环节，展开目标环节
+        this.expandedNodes.add(toStageId);
+
+        this.renderAll();
     }
  
     // ---------- 日历交互（传统网格拖拽）----------
@@ -1500,16 +2764,27 @@ class ProjectManager {
         const gridId = this.calendarType === 'month' ? 'calendarGrid' : 'weekGrid';
         const grid = document.getElementById(gridId);
         if (!grid) return;
- 
-        // 绑定任务条拖拽和点击
+
+        // 月视图：连续滚动切换月份（由轨道滚动自然驱动，不再拦截滚轮）
+        if (this.calendarType === 'month') {
+            const scrollArea = document.querySelector('.calendar-scroll-area');
+            if (scrollArea) {
+                scrollArea.addEventListener('scroll', () => this._onCalRailScroll(scrollArea), { passive: true });
+            }
+        }
+
+        // 绑定任务条拖拽（鼠标 + 触摸）与轻点编辑
         grid.querySelectorAll('.day-bar-item').forEach(bar => {
-            bar.onmousedown = (e) => {
+            bar.onpointerdown = (e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
                 e.stopPropagation();
                 const eventId = bar.dataset.eventId;
                 const resizeHandle = e.target.closest('.bar-resize-handle');
                 const node = this.findNode(eventId);
                 if (!node) return;
- 
+
+                // 记录起点，用于区分「轻点（打开弹窗）」与「拖拽（改日期）」
+                this._pdStart = { x: e.clientX, y: e.clientY, moved: false };
                 if (resizeHandle) {
                     this._resizingEvent = { id: eventId, startX: e.clientX, origEndDate: node.endDate || node.startDate };
                     document.body.classList.add('dragging-resize');
@@ -1517,7 +2792,6 @@ class ProjectManager {
                     this._movingEvent = { id: eventId, startX: e.clientX, origStartDate: node.startDate, origEndDate: node.endDate || node.startDate };
                     document.body.classList.add('dragging-move');
                 }
-                e.preventDefault();
             };
             bar.ondblclick = (e) => {
                 e.stopPropagation();
@@ -1528,82 +2802,124 @@ class ProjectManager {
                 }
             };
         });
- 
+
         // document 级监听只绑定一次
         if (!this._calendarDocListenersAdded) {
             this._calendarDocListenersAdded = true;
- 
-            document.addEventListener('mousemove', (e) => {
+
+            document.addEventListener('pointermove', (e) => {
                 if (!this._movingEvent && !this._resizingEvent) return;
- 
-                const container = this.calendarType === 'month'
-                    ? e.target.closest('.calendar-week-row')
-                    : e.target.closest('.week-content-grid');
-                if (!container) {
-                    this.hideDragColHighlight();
-                    return;
-                }
- 
-                const rect = container.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
-                const colLeft = (dayIdx / 7) * 100;
- 
-                let baseDate;
-                if (this.calendarType === 'month') {
-                    const weekRows = document.querySelectorAll('.calendar-week-row');
-                    const rowEl = e.target.closest('.calendar-week-row');
-                    if (!rowEl) return;
-                    const rowIdx = Array.from(weekRows).indexOf(rowEl);
-                    const dates = this.getMonthDates();
-                    baseDate = dates[rowIdx * 7];
-                } else {
-                    baseDate = this.getWeekDates()[0];
-                }
-                if (!baseDate) return;
- 
-                const newDate = new Date(baseDate);
-                newDate.setDate(baseDate.getDate() + dayIdx);
- 
-                if (this._movingEvent) {
-                    const node = this.findNode(this._movingEvent.id);
-                    if (node && node.startDate) {
-                        const newStartDate = this.formatDateISO(newDate);
-                        const diffDays = Math.round((this.parseDate(newStartDate) - this.parseDate(node.startDate)) / 86400000);
-                        node.startDate = newStartDate;
-                        if (node.endDate) {
-                            const end = this.parseDate(node.endDate);
-                            end.setDate(end.getDate() + diffDays);
-                            node.endDate = this.formatDateISO(end);
-                        }
-                        // 显示列高亮（整列覆盖）
-                        this.showDragColHighlight(container, colLeft, 100 / 7);
-                        this._needsRerender = true;
+                // 触摸轻点阈值：位移小于 6px 视为轻点，不触发日期移动
+                if (this._pdStart && !this._pdStart.moved) {
+                    if (Math.abs(e.clientX - this._pdStart.x) > 6 || Math.abs(e.clientY - this._pdStart.y) > 6) {
+                        this._pdStart.moved = true;
                     }
-                } else if (this._resizingEvent) {
-                    const node = this.findNode(this._resizingEvent.id);
-                    if (node && node.startDate) {
-                        const newEndDate = this.formatDateISO(newDate);
-                        if (this.parseDate(newEndDate) >= this.parseDate(node.startDate)) {
-                            node.endDate = newEndDate;
-                            // 显示竖线指示
-                            this.showDragColLine(container, colLeft + 100 / 7);
-                            this._needsRerender = true;
-                        }
-                    }
+                    if (!this._pdStart.moved) return;
                 }
+                this._updateCalendarDrag(e.clientX, e.clientY);
             });
- 
-            document.addEventListener('mouseup', () => {
+
+            const endDrag = () => {
+                if (!this._movingEvent && !this._resizingEvent) { this._pdStart = null; return; }
+                const movedEvent = this._movingEvent;
+                const wasTap = !!(this._pdStart && !this._pdStart.moved);
                 document.body.classList.remove('dragging-move', 'dragging-resize');
                 this.hideDragColHighlight();
                 this._movingEvent = null;
                 this._resizingEvent = null;
+                this._pdStart = null;
                 if (this._needsRerender) {
                     this._needsRerender = false;
                     this.renderAll();
+                } else if (wasTap && movedEvent && this.isMobile()) {
+                    // 移动端无双击：轻点任务条直接打开任务弹窗
+                    const node = this.findNode(movedEvent.id);
+                    if (node && node.type === 'task') {
+                        this.openTaskModal(node.startDate, node.endDate || node.startDate, movedEvent.id);
+                    }
                 }
-            });
+            };
+            document.addEventListener('pointerup', endDrag);
+            document.addEventListener('pointercancel', endDrag);
+        }
+    }
+
+    // 拖拽位移：按指针位置定位所在周行/月份块与日期列（鼠标与触摸通用）
+    _updateCalendarDrag(clientX, clientY) {
+        let hit = document.elementFromPoint ? document.elementFromPoint(clientX, clientY) : null;
+
+        if (this.calendarType === 'month') {
+            let container = hit ? hit.closest('.calendar-week-row') : null;
+            let blockEl = hit ? hit.closest('.calendar-month-block') : null;
+            if (!container || !blockEl) {
+                // 指针落在任务条自身时，回退到该任务条所属的周行/月份块
+                const activeId = (this._movingEvent || this._resizingEvent || {}).id;
+                const bar = activeId ? document.querySelector(`.day-bar-item[data-event-id="${activeId}"]`) : null;
+                if (bar) {
+                    container = container || bar.closest('.calendar-week-row');
+                    blockEl = blockEl || bar.closest('.calendar-month-block');
+                }
+            }
+            if (!container || !blockEl) { this.hideDragColHighlight(); return; }
+
+            const rect = container.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
+            const colLeft = (dayIdx / 7) * 100;
+
+            // 按所在月份块内的行索引取基准日期，兼容多月份轨道
+            const rowIdx = Array.from(blockEl.querySelectorAll('.calendar-week-row')).indexOf(container);
+            const dates = this.getMonthDates(this._parseMonthISO(blockEl.dataset.month));
+            const baseDate = dates[rowIdx * 7];
+            if (!baseDate) return;
+            this._applyCalendarDrag(container, baseDate, dayIdx, colLeft);
+        } else {
+            let container = hit ? hit.closest('.week-content-grid') : null;
+            if (!container) {
+                const activeId = (this._movingEvent || this._resizingEvent || {}).id;
+                const bar = activeId ? document.querySelector(`.day-bar-item[data-event-id="${activeId}"]`) : null;
+                container = bar ? bar.closest('.week-content-grid') : null;
+            }
+            if (!container) { this.hideDragColHighlight(); return; }
+
+            const rect = container.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
+            const colLeft = (dayIdx / 7) * 100;
+            this._applyCalendarDrag(container, this.getWeekDates()[0], dayIdx, colLeft);
+        }
+    }
+
+    _applyCalendarDrag(container, baseDate, dayIdx, colLeft) {
+        const newDate = new Date(baseDate);
+        newDate.setDate(baseDate.getDate() + dayIdx);
+
+        if (this._movingEvent) {
+            const node = this.findNode(this._movingEvent.id);
+            if (node && node.startDate) {
+                const newStartDate = this.formatDateISO(newDate);
+                const diffDays = Math.round((this.parseDate(newStartDate) - this.parseDate(node.startDate)) / 86400000);
+                node.startDate = newStartDate;
+                if (node.endDate) {
+                    const end = this.parseDate(node.endDate);
+                    end.setDate(end.getDate() + diffDays);
+                    node.endDate = this.formatDateISO(end);
+                }
+                // 显示列高亮（整列覆盖）
+                this.showDragColHighlight(container, colLeft, 100 / 7);
+                this._needsRerender = true;
+            }
+        } else if (this._resizingEvent) {
+            const node = this.findNode(this._resizingEvent.id);
+            if (node && node.startDate) {
+                const newEndDate = this.formatDateISO(newDate);
+                if (this.parseDate(newEndDate) >= this.parseDate(node.startDate)) {
+                    node.endDate = newEndDate;
+                    // 显示竖线指示
+                    this.showDragColLine(container, colLeft + 100 / 7);
+                    this._needsRerender = true;
+                }
+            }
         }
     }
  
@@ -1717,23 +3033,47 @@ class ProjectManager {
             startDate,
             endDate
         };
- 
+
         document.getElementById('taskName').value = '';
-        document.getElementById('taskDescription').value = '';
-        document.getElementById('taskStart').value = startDate;
-        document.getElementById('taskEnd').value = endDate;
+        document.getElementById('taskStart').value = startDate || '';
+        document.getElementById('taskEnd').value = endDate || '';
         document.getElementById('taskArchived').checked = false;
- 
+        document.getElementById('taskWorkdaysOnly').checked = false;
+
+        // 设置标题
+        document.getElementById('taskModalTitle').textContent = taskId ? '编辑任务' : '新建任务';
+
+        // 编辑任务时显示删除按钮，新建任务时隐藏
+        const deleteBtn = document.getElementById('taskModalDeleteBtn');
+        if (taskId) {
+            deleteBtn.classList.remove('hidden');
+        } else {
+            deleteBtn.classList.add('hidden');
+        }
+
         this.populateCustomerOptions();
         document.getElementById('taskProject').innerHTML = '<option value="">请选择</option>';
         document.getElementById('taskStage').innerHTML = '<option value="">请选择</option>';
- 
+
+        // 任务阶段：默认清空，编辑时回填
+        const phasesContainer = document.getElementById('taskPhasesContainer');
+        phasesContainer.innerHTML = '';
+
         if (taskId) {
             const node = this.findNode(taskId);
             if (node) {
                 document.getElementById('taskName').value = node.name;
-                document.getElementById('taskDescription').value = node.description || '';
+                document.getElementById('taskStart').value = node.startDate || startDate || '';
+                document.getElementById('taskEnd').value = node.endDate || endDate || '';
                 document.getElementById('taskArchived').checked = node.archived || false;
+                document.getElementById('taskWorkdaysOnly').checked = node.workdaysOnly || false;
+                // 回填任务阶段
+                const phases = Array.isArray(node.phases) ? node.phases : [];
+                if (phases.length === 0) {
+                    this.addTaskPhaseRow(); // 默认给一个空行，便于录入
+                } else {
+                    phases.forEach(ph => this.addTaskPhaseRow(ph));
+                }
                 // 找到所属的 customer 和 project
                 const path = [];
                 const findPath = (nodes) => {
@@ -1766,11 +3106,126 @@ class ProjectManager {
                     }
                 }
             }
+        } else {
+            // 新建任务：默认给一个空阶段行
+            this.addTaskPhaseRow();
+            // 默认勾选「仅工作日执行」
+            document.getElementById('taskWorkdaysOnly').checked = true;
         }
- 
+
         document.getElementById('taskModal').classList.remove('hidden');
         document.getElementById('taskModal').classList.add('flex');
         setTimeout(() => document.getElementById('taskName').focus(), 100);
+    }
+
+    // 添加一行任务阶段（可选传入已有数据回填）
+    addTaskPhaseRow(phase = null) {
+        const container = document.getElementById('taskPhasesContainer');
+        const wrap = document.createElement('div');
+        wrap.className = 'task-phase-row';
+        const id = phase && phase.id ? phase.id : this.generateId();
+        wrap.dataset.phaseId = id;
+        const name = phase ? (phase.name || '') : '';
+        const start = phase ? (phase.startDate || '') : '';
+        const end = phase ? (phase.endDate || '') : '';
+        const done = phase ? (phase.done || false) : false;
+        wrap.innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="phase-drag-handle" draggable="true" title="拖拽调整阶段顺序">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
+                </span>
+                <input type="text" class="phase-name-input flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="阶段名称" value="${name.replace(/"/g, '&quot;')}">
+                <input type="date" class="phase-start-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${start}">
+                <span class="text-gray-400 text-xs">~</span>
+                <input type="date" class="phase-end-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${end}">
+                <label class="phase-done-label" title="标记该阶段为已完成">
+                    <input type="checkbox" class="phase-done-input" ${done ? 'checked' : ''}>
+                </label>
+                <button type="button" onclick="app.removeTaskPhaseRow(this)" class="phase-remove-btn" title="删除该阶段">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                </button>
+            </div>
+        `;
+        this._initPhaseRowDrag(wrap);
+        container.appendChild(wrap);
+    }
+
+    // 任务阶段行拖拽排序
+    _initPhaseRowDrag(wrap) {
+        const handle = wrap.querySelector('.phase-drag-handle');
+        if (handle) {
+            handle.addEventListener('dragstart', (e) => {
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', wrap.dataset.phaseId || '');
+                this._draggingPhaseRow = wrap;
+                wrap.classList.add('phase-dragging');
+            });
+            handle.addEventListener('dragend', () => {
+                wrap.classList.remove('phase-dragging');
+                this._draggingPhaseRow = null;
+                document.querySelectorAll('.task-phase-row').forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+            });
+        }
+        wrap.addEventListener('dragover', (e) => {
+            const dragged = this._draggingPhaseRow;
+            if (!dragged || dragged === wrap) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = wrap.getBoundingClientRect();
+            const after = (e.clientY - rect.top) > rect.height / 2;
+            wrap.classList.toggle('drag-over-top', !after);
+            wrap.classList.toggle('drag-over-bottom', after);
+        });
+        wrap.addEventListener('dragleave', () => {
+            wrap.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+        wrap.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const dragged = this._draggingPhaseRow;
+            if (!dragged || dragged === wrap) return;
+            const rect = wrap.getBoundingClientRect();
+            const after = (e.clientY - rect.top) > rect.height / 2;
+            if (after) {
+                wrap.after(dragged);
+            } else {
+                wrap.before(dragged);
+            }
+            wrap.classList.remove('drag-over-top', 'drag-over-bottom');
+            this._draggingPhaseRow = null;
+        });
+    }
+
+    removeTaskPhaseRow(btn) {
+        const wrap = btn.closest('.task-phase-row');
+        const container = document.getElementById('taskPhasesContainer');
+        if (wrap) wrap.remove();
+        // 至少保留一个空行，便于录入
+        if (container.children.length === 0) this.addTaskPhaseRow();
+    }
+
+    // 收集任务阶段数据
+    collectTaskPhases() {
+        const container = document.getElementById('taskPhasesContainer');
+        const rows = container.querySelectorAll('.task-phase-row');
+        const phases = [];
+        rows.forEach(row => {
+            const name = row.querySelector('.phase-name-input').value.trim();
+            const startDate = row.querySelector('.phase-start-input').value;
+            const endDate = row.querySelector('.phase-end-input').value;
+            const doneEl = row.querySelector('.phase-done-input');
+            const done = doneEl ? doneEl.checked : false;
+            // 跳过完全空的行
+            if (!name && !startDate && !endDate) return;
+            phases.push({
+                id: row.dataset.phaseId,
+                name,
+                startDate,
+                endDate,
+                done
+            });
+        });
+        return phases;
     }
  
     closeTaskModal() {
@@ -1781,28 +3236,36 @@ class ProjectManager {
  
     saveTaskModal() {
         const name = document.getElementById('taskName').value.trim();
-        const description = document.getElementById('taskDescription').value.trim();
         const customerId = document.getElementById('taskCustomer').value;
         const projectId = document.getElementById('taskProject').value;
         const stageId = document.getElementById('taskStage').value;
         const startDate = document.getElementById('taskStart').value;
         const endDate = document.getElementById('taskEnd').value;
         const archived = document.getElementById('taskArchived').checked;
- 
+        const workdaysOnly = document.getElementById('taskWorkdaysOnly').checked;
+        const phases = this.collectTaskPhases();
+
         if (!name) { alert('请输入任务名称'); return; }
         if (!customerId) { alert('请选择品牌'); return; }
         if (!projectId) { alert('请选择项目'); return; }
         if (!stageId) { alert('请选择环节'); return; }
- 
+
         if (this._taskModalData.taskId) {
             // 编辑现有任务
             const task = this.findNode(this._taskModalData.taskId);
             if (task) {
+                // 归档状态变化时同步 archivedAt
+                if (archived && !task.archived) {
+                    task.archivedAt = new Date().toISOString();
+                } else if (!archived && task.archived) {
+                    task.archivedAt = null;
+                }
                 task.name = name;
-                task.description = description;
                 task.startDate = startDate;
                 task.endDate = endDate;
                 task.archived = archived;
+                task.workdaysOnly = workdaysOnly;
+                task.phases = phases;
  
                 // 如果关联的环节改变了，需要移动节点
                 const oldStage = this.findParent(task.id);
@@ -1823,10 +3286,12 @@ class ProjectManager {
                 id: this.generateId(),
                 type: 'task',
                 name,
-                description,
                 startDate,
                 endDate,
                 archived: archived || false,
+                archivedAt: archived ? new Date().toISOString() : null,
+                workdaysOnly: workdaysOnly || false,
+                phases: phases,
                 children: []
             };
             const stage = this.findNode(stageId);

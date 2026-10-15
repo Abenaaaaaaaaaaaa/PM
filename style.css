@@ -192,8 +192,9 @@
 }
 .calendar-scroll-area {
     overflow-y: auto;
-    max-height: calc(100vh - 280px);
+    max-height: calc(100vh - 320px);
     padding-bottom: 8px;
+    scroll-behavior: auto;
 }
 .calendar-header {
     position: sticky;
@@ -211,6 +212,29 @@
     font-weight: 600;
     color: #64748b;
     background: #f8fafc;
+}
+/* 连续滚动的月份轨道 */
+.calendar-month-rail {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+.calendar-month-block {
+    background: #fff;
+}
+.calendar-month-block + .calendar-month-block {
+    border-top: 8px solid #f1f5f9;
+}
+.calendar-month-label {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
 }
 .calendar-grid {
     display: flex;
@@ -363,6 +387,230 @@
     color: white;
     border-color: #3b82f6;
     box-shadow: 0 2px 4px rgba(59,130,246,0.3);
+}
+
+/* 2.0 项目多选下拉框 + 常用快捷按钮 */
+.project-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.project-multiselect-wrapper {
+    position: relative;
+    min-width: 200px;
+}
+.project-multiselect-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 12px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: border-color 0.15s;
+}
+.project-multiselect-trigger:hover {
+    border-color: #3b82f6;
+}
+.project-multiselect-label {
+    color: #334155;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 280px;
+}
+.project-multiselect-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    max-height: 240px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    z-index: 50;
+    padding: 4px;
+}
+.project-multiselect-wrapper.open .project-multiselect-dropdown {
+    display: block;
+}
+.project-multiselect-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #334155;
+    transition: background 0.1s;
+}
+.project-multiselect-item:hover {
+    background: #f1f5f9;
+}
+.project-multiselect-item input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: #3b82f6;
+    cursor: pointer;
+}
+.project-multiselect-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.project-fav-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.project-fav-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: white;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    white-space: nowrap;
+}
+.project-fav-btn:hover {
+    background: #f1f5f9;
+    color: #334155;
+}
+.project-fav-btn.active {
+    background: #3b82f6;
+    color: white;
+    border-color: #3b82f6;
+    box-shadow: 0 2px 4px rgba(59,130,246,0.3);
+}
+
+/* 2.0 常用项目 chip（可增删） */
+.project-fav-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 4px 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: white;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    white-space: nowrap;
+}
+.project-fav-chip:hover {
+    background: #f1f5f9;
+    color: #334155;
+}
+.project-fav-chip.active {
+    background: #3b82f6;
+    color: white;
+    border-color: #3b82f6;
+    box-shadow: 0 2px 4px rgba(59,130,246,0.3);
+}
+.project-fav-chip > span:first-child {
+    cursor: pointer;
+    user-select: none;
+}
+.project-fav-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+    padding: 0;
+    border: none;
+}
+.project-fav-chip:hover .project-fav-remove {
+    background: rgba(239,68,68,0.15);
+    color: #ef4444;
+}
+.project-fav-chip.active .project-fav-remove {
+    color: rgba(255,255,255,0.8);
+}
+.project-fav-chip.active:hover .project-fav-remove {
+    background: rgba(255,255,255,0.2);
+    color: white;
+}
+
+/* 添加常用项目 */
+.project-fav-add-wrapper {
+    position: relative;
+}
+.project-fav-add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: white;
+    border: 1px dashed #cbd5e1;
+    color: #94a3b8;
+}
+.project-fav-add-btn:hover {
+    border-color: #3b82f6;
+    color: #3b82f6;
+    background: #eff6ff;
+}
+.project-fav-add-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 160px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    z-index: 50;
+    padding: 4px;
+}
+.project-fav-add-wrapper.open .project-fav-add-dropdown {
+    display: block;
+}
+.project-fav-add-item {
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #334155;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.project-fav-add-item:hover {
+    background: #eff6ff;
+    color: #2563eb;
+}
+.project-fav-add-empty {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: #94a3b8;
+    text-align: center;
 }
 
 /* 任务横条（跨天显示） */
@@ -580,4 +828,606 @@ body.dragging-resize .day-bar-item {
     color: #1e293b;
     min-width: 160px;
     text-align: center;
+}
+
+/* 2.0 可折叠分组表头 */
+tr.group-header td {
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+tr.group-header:hover td {
+    filter: brightness(0.97);
+}
+tr.group-header .flex.items-center {
+    user-select: none;
+}
+
+/* 2.0 归档视图多选框 */
+.archive-checkbox {
+    cursor: pointer;
+}
+
+/* 2.0 行拖拽排序 */
+.drag-handle {
+    display: inline-flex;
+    align-items: center;
+    cursor: grab;
+    flex-shrink: 0;
+}
+.drag-handle:active {
+    cursor: grabbing;
+}
+tr.task-row {
+    transition: opacity 0.15s, background-color 0.15s;
+}
+tr.dragging-row {
+    opacity: 0.4;
+    background: #eff6ff !important;
+}
+tr.drag-over-top {
+    border-top: 3px solid #3b82f6;
+}
+tr.drag-over-bottom {
+    border-bottom: 3px solid #3b82f6;
+}
+tr.task-row:hover .drag-handle svg {
+    color: #64748b;
+}
+
+/* 环节颜色预设按钮 */
+.stage-color-preset {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+    padding: 0;
+}
+.stage-color-preset:hover {
+    transform: scale(1.15);
+}
+.stage-color-preset.selected {
+    border-color: #1e293b;
+    box-shadow: 0 0 0 2px white, 0 0 0 4px #1e293b;
+}
+
+/* 已归档任务行（列表视图自动置灰） */
+.archived-task-row > td {
+    opacity: 0.55;
+    color: #94a3b8 !important;
+}
+.archived-task-row .editable-cell,
+.archived-task-row .font-medium {
+    color: #94a3b8 !important;
+    text-decoration: line-through;
+    text-decoration-color: rgba(148, 163, 184, 0.6);
+}
+.archived-task-row:hover > td {
+    background-color: #f8fafc;
+}
+
+/* 工作日数标注 */
+.workday-count {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6366f1;
+    background: #eef2ff;
+    padding: 1px 4px;
+    border-radius: 4px;
+    margin-left: 2px;
+    line-height: 1.4;
+}
+.archived-task-row .workday-count {
+    color: #94a3b8;
+    background: #f1f5f9;
+}
+
+/* 仅工作日执行 小标记 */
+.workday-only-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: #f59e0b;
+    padding: 1px 4px;
+    border-radius: 4px;
+    margin-left: 2px;
+    line-height: 1.4;
+}
+
+/* 日历：休息日/调休工作日 标记 */
+.calendar-day-tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    color: #fff;
+    border-radius: 3px;
+    padding: 0 3px;
+    margin-left: 3px;
+    line-height: 1.5;
+    vertical-align: middle;
+}
+.calendar-day-tag.tag-rest {
+    background: #94a3b8;
+}
+.calendar-day-tag.tag-work {
+    background: #f59e0b;
+}
+.calendar-day.rest-day:not(.other-month) {
+    background-color: #fafafa;
+}
+.calendar-day.rest-day .calendar-day-number {
+    color: #94a3b8;
+}
+.calendar-day.makeup-day .calendar-day-number {
+    color: #f59e0b;
+    font-weight: 700;
+}
+.week-day-cell.rest-day {
+    background-color: #fafafa;
+}
+.week-day-cell.makeup-day {
+    background-color: #fffbeb;
+}
+
+/* 仅工作日执行任务条（虚线边框，区别于普通任务） */
+.day-bar-item.workday-only-bar {
+    border-style: dashed !important;
+    border-width: 1.5px !important;
+}
+
+/* toast 动画 */
+.toast-anim {
+    animation: toast-in 0.25s ease-out;
+}
+@keyframes toast-in {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+/* 任务阶段编辑器（任务弹窗） */
+.task-phase-row {
+    padding: 2px 0;
+}
+/* 阶段行不撑破弹窗：名称可收缩，日期固定窄宽，删除/完成控件始终可见 */
+.task-phase-row .phase-name-input {
+    min-width: 0;
+}
+.task-phase-row .phase-start-input,
+.task-phase-row .phase-end-input {
+    width: 128px;
+    flex-shrink: 0;
+}
+.task-phase-row .phase-remove-btn {
+    color: #ef4444;
+    padding: 4px;
+    border-radius: 4px;
+    transition: background 0.15s;
+    flex-shrink: 0;
+}
+.task-phase-row .phase-remove-btn:hover {
+    background: #fee2e2;
+}
+
+/* 日历任务条：任务阶段中间行（按日期定位的迷你条，可多泳道避免重叠） */
+.day-bar-item .bar-phases {
+    position: relative;
+    margin: 2px 0;
+    pointer-events: none;
+}
+.day-bar-item .phase-mini-bar {
+    position: absolute;
+    height: 14px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 14px;
+    padding: 0 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-sizing: border-box;
+}
+.day-bar-item .phase-chip {
+    font-weight: 600;
+}
+.day-bar-item .phase-sep {
+    opacity: 0.5;
+    margin: 0 3px;
+}
+/* 已完成阶段的文本 chip（侧栏/列表展示位） */
+.phase-chip.phase-done-chip {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+.phase-done-mark {
+    color: #16a34a;
+    font-weight: 700;
+    margin-left: 2px;
+}
+.day-bar-item.has-phases {
+    /* 含阶段的任务条加高 */
+    min-height: 56px;
+}
+/* 已完成的任务阶段迷你条：置灰 + 删除线 */
+.day-bar-item .phase-mini-bar.phase-done {
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+/* 任务阶段行：Done 复选框（仅单选框，无文字） */
+.task-phase-row .phase-done-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background-color: #f1f5f9;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.task-phase-row .phase-done-label:hover {
+    background-color: #e2e8f0;
+}
+.task-phase-row .phase-done-input {
+    width: 15px;
+    height: 15px;
+    accent-color: #16a34a;
+    cursor: pointer;
+    margin: 0;
+}
+
+/* 任务阶段行：拖拽手柄与拖拽状态 */
+.task-phase-row .phase-drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: grab;
+    color: #cbd5e1;
+    transition: color 0.15s;
+}
+.task-phase-row .phase-drag-handle:hover {
+    color: #64748b;
+}
+.task-phase-row .phase-drag-handle:active {
+    cursor: grabbing;
+}
+.task-phase-row.phase-dragging {
+    opacity: 0.4;
+    background: #eff6ff;
+    border-radius: 6px;
+}
+.task-phase-row.drag-over-top {
+    border-top: 2px solid #3b82f6;
+}
+.task-phase-row.drag-over-bottom {
+    border-bottom: 2px solid #3b82f6;
+}
+
+/* ---------- 隐藏栏（吸附底部，不随页面滚动） ---------- */
+.hidden-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    background: #ffffff;
+    border-top: 1px solid #e2e8f0;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.08);
+    max-height: 45vh;
+    display: flex;
+    flex-direction: column;
+}
+.hidden-bar.collapsed {
+    max-height: 44px;
+}
+.hidden-bar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 24px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+.hidden-bar-head:hover {
+    background: #f1f5f9;
+}
+.hidden-bar.collapsed .hidden-bar-head {
+    border-bottom: none;
+}
+.hidden-bar-body {
+    overflow-y: auto;
+    padding: 10px 24px 14px;
+    flex: 1;
+}
+.hidden-project-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: #fafafa;
+    overflow: hidden;
+}
+.hidden-project-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    cursor: pointer;
+    gap: 12px;
+    transition: background 0.15s;
+}
+.hidden-project-head:hover {
+    background: #f1f5f9;
+}
+.hidden-project-body {
+    padding: 8px 12px 12px;
+    border-top: 1px solid #e2e8f0;
+    background: #ffffff;
+}
+.hidden-stage-row {
+    padding: 6px 0;
+}
+.hidden-stage-row + .hidden-stage-row {
+    border-top: 1px dashed #f1f5f9;
+}
+.hidden-task-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+}
+
+/* 项目拖拽排序手柄与样式 */
+.project-drag-handle {
+    display: inline-flex;
+    align-items: center;
+    cursor: grab;
+    flex-shrink: 0;
+}
+.project-drag-handle:active {
+    cursor: grabbing;
+}
+tr.project-header-row {
+    transition: opacity 0.15s, background-color 0.15s;
+}
+tr.project-header-row.dragging-row {
+    opacity: 0.5;
+    background: #eff6ff !important;
+}
+tr.project-header-row.drag-over-top {
+    border-top: 3px solid #22c55e;
+}
+tr.project-header-row.drag-over-bottom {
+    border-bottom: 3px solid #22c55e;
+}
+tr.project-header-row:hover .project-drag-handle svg {
+    color: #64748b;
+}
+
+/* 列表视图底部留白，避免被固定隐藏栏遮挡 */
+#mainContent.has-hidden-bar {
+    padding-bottom: 48vh;
+}
+
+/* ---------- 移动端基础（PC 端默认隐藏 / 触摸优化） ---------- */
+.mobile-only { display: none !important; }
+#sidebarBackdrop { display: none; }
+html { -webkit-text-size-adjust: 100%; }
+body { -webkit-tap-highlight-color: transparent; }
+/* 日历任务条：禁止浏览器接管触摸滚动，改为拖拽交互 */
+.day-bar-item { touch-action: none; }
+
+/* ---------- 移动端适配（≤ 768px，重点机型：小米14 / 安卓16） ---------- */
+@media (max-width: 768px) {
+    /* ===== 顶部导航：固定两行网格布局 =====
+       行1 = 菜单+标题 | 视图切换；行2 = 搜索框 | 同步按钮组 */
+    header {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 8px 12px !important;
+        padding-top: calc(8px + env(safe-area-inset-top)) !important;
+    }
+    /* 右侧容器透明化：其内部控件直接作为 header 的网格项 */
+    header > div:last-child { display: contents; }
+    header > div:first-child { grid-column: 1; grid-row: 1; min-width: 0; }
+    header > div:last-child > #calendarToggle + .bg-gray-100 { grid-column: 2; grid-row: 1; }
+    header > div:last-child > .relative { grid-column: 1; grid-row: 2; min-width: 0; }
+    header > div:last-child > .bg-gray-100 { grid-column: 2; grid-row: 2; }
+    /* 日历的「月历/周历」切换仅在日历视图出现，单独占一行 */
+    header > div:last-child > #calendarToggle { grid-column: 1 / -1; grid-row: 3; justify-self: start; }
+    #syncStatus { grid-column: 1 / -1; grid-row: 4; justify-self: end; font-size: 11px; }
+    .mobile-only { display: flex !important; }
+    .mobile-only-icon { display: flex !important; }
+    .hide-on-mobile { display: none !important; }
+    header h1 {
+        font-size: 15px !important;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    header .w-8.h-8 { width: 26px !important; height: 26px !important; }
+    header button { padding: 6px 8px !important; min-height: 34px; }
+    /* 搜索框自适应撑满第二行剩余宽度 */
+    #globalSearchInput { width: 100% !important; min-width: 100px; }
+    header > div:last-child > .relative #globalSearchInput { width: 100% !important; min-width: 100px; }
+
+    /* ===== 侧栏：改为抽屉式 ===== */
+    #sidebar, #sidebar.collapsed {
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: min(84vw, 320px) !important;
+        z-index: 46;
+        transform: translateX(-102%);
+        transition: transform 0.25s ease;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        border-right: 1px solid #e2e8f0 !important;
+        box-shadow: 4px 0 24px rgba(15, 23, 42, 0.18);
+        padding-top: env(safe-area-inset-top);
+    }
+    #sidebar.mobile-open { transform: translateX(0); }
+    #resizeHandle { display: none !important; }
+    #sidebarExpandBtn { display: none !important; }
+    #sidebarBackdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        z-index: 45;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+    }
+    #sidebarBackdrop.show { opacity: 1; pointer-events: auto; }
+    .tree-content { padding: 9px 8px; }
+    .tree-action-btn { padding: 5px; }
+    .tree-children { padding-left: 14px; }
+    /* 触摸端无 hover 态：树形操作按钮常驻显示 */
+    .tree-actions { display: flex !important; }
+
+    /* ===== 主内容区 ===== */
+    #mainContent { padding: 10px !important; }
+    #mainContent > .rounded-xl.p-6 { padding: 10px !important; }
+    #mainContent .px-6 {
+        padding-left: 4px !important;
+        padding-right: 4px !important;
+    }
+    #mainContent .py-4 {
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+    }
+    #mainContent.has-hidden-bar { padding-bottom: 58vh; }
+
+    /* ===== 表格视图 ===== */
+    .data-table { font-size: 12.5px; }
+    .data-table th,
+    .data-table td { padding: 7px 8px; }
+    .data-table th { font-size: 12px; }
+    #dataTable { min-width: 660px; }
+    #archiveTable { min-width: 1080px; }
+    .overflow-x-auto {
+        -webkit-overflow-scrolling: touch;
+    }
+    /* 表格卡片头部（标题 + 操作）换行 */
+    #mainContent .flex.justify-between.items-center {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    #archiveSearchInput { width: 100% !important; }
+
+    /* ===== 日历视图 ===== */
+    #mainContent .calendar-nav {
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+    .calendar-nav-btn { padding: 8px 14px; font-size: 13px; }
+    .calendar-title {
+        font-size: 15px;
+        min-width: 0;
+        text-align: left;
+        flex: 1 1 auto;
+    }
+    .calendar-nav .text-xs { display: none; }
+    .calendar-nav > .ml-auto { margin-left: 0 !important; width: 100%; }
+    .calendar-nav > .ml-auto button { width: 100%; justify-content: center; }
+    .calendar-header-cell { padding: 6px 2px; font-size: 11px; }
+    .calendar-month-label { padding: 6px 10px; font-size: 12px; }
+    .calendar-scroll-area {
+        max-height: calc(100vh - 290px);
+        max-height: calc(100dvh - 290px);
+    }
+    .calendar-week-row { min-height: 76px; }
+    .calendar-day { min-height: 76px; padding: 3px; }
+    .calendar-day-header { gap: 2px; margin-bottom: 2px; }
+    .calendar-day-number {
+        font-size: 11px;
+        width: 19px;
+        height: 19px;
+        margin-bottom: 0;
+    }
+    .calendar-holiday-tag { display: none; }
+    .calendar-day-tag { font-size: 8px; padding: 0 2px; margin-left: 1px; }
+    .day-bar-layer { top: 25px; }
+    .day-bar-item .bar-title { font-size: 9px; }
+    .day-bar-item .bar-meta { display: none; }
+    .day-bar-item .phase-mini-bar { height: 12px; line-height: 12px; font-size: 8px; }
+    .day-bar-item .bar-resize-handle { width: 10px; }
+    /* 项目筛选栏 */
+    .project-filter-bar { gap: 8px; margin-bottom: 10px; }
+    .project-multiselect-wrapper { flex: 1 1 100%; min-width: 0; }
+    .project-multiselect-label { max-width: none; }
+    .project-fav-btn, .project-fav-chip { padding: 7px 12px; }
+
+    /* ===== 隐藏栏 ===== */
+    .hidden-bar { max-height: 60vh; }
+    .hidden-bar.collapsed { max-height: 42px; }
+    .hidden-bar-head { padding: 9px 12px; gap: 6px; }
+    .hidden-bar-head .text-xs { font-size: 10px; }
+    .hidden-bar-body { padding: 10px 12px 14px; }
+    .hidden-project-head { flex-wrap: wrap; gap: 6px; }
+    .hidden-project-head > .flex:last-child { width: 100%; justify-content: flex-end; }
+
+    /* ===== 模态框 ===== */
+    #projectModal > div,
+    #inputModal > div,
+    #stageModal > div,
+    #taskModal > div,
+    #syncModal > div {
+        width: 94vw !important;
+        max-width: 94vw !important;
+        max-height: 88dvh !important;
+        max-height: 88vh !important;
+    }
+    #projectModal .px-6,
+    #inputModal .px-6,
+    #stageModal .px-6,
+    #taskModal .px-6,
+    #syncModal .px-6 {
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+    }
+    #taskModal .grid-cols-3 { grid-template-columns: 1fr !important; }
+    #taskModal .flex.items-center.gap-6 {
+        flex-wrap: wrap;
+        gap: 8px !important;
+        align-items: flex-start;
+    }
+    #taskModal .flex.items-center.gap-6 label { align-items: flex-start; }
+    /* 任务阶段行：窄屏固定折成两行（上行=手柄+阶段名，下行=起止日期+完成+删除），避免横向溢出 */
+    .task-phase-row > div { flex-wrap: wrap; row-gap: 6px; column-gap: 6px; }
+    .task-phase-row .phase-name-input { flex: 1 1 calc(100% - 30px); }
+    .task-phase-row .phase-start-input,
+    .task-phase-row .phase-end-input {
+        width: 108px;
+        flex: 0 0 108px;
+        min-width: 0;
+    }
+    #projectModal .grid-cols-2 { grid-template-columns: 1fr !important; }
+    /* 模态框底部按钮更易点按 */
+    #mainContent button,
+    .fixed button { min-height: 34px; }
+}
+
+/* 小屏手机（≤ 400px，如小米14 竖屏）进一步收紧 */
+@media (max-width: 400px) {
+    header { padding: 8px 10px !important; }
+    header h1 { font-size: 14px !important; }
+    .calendar-scroll-area {
+        max-height: calc(100vh - 300px);
+        max-height: calc(100dvh - 300px);
+    }
+    #mainContent { padding: 8px !important; }
 }
