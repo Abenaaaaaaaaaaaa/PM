@@ -645,7 +645,52 @@ class ProjectManager {
         return parts.length ? parts.join('<span class="phase-sep">·</span>') : '';
     }
 
-    // 计算阶段在任务条内的定位（百分比 left/width），相对任务条本身
+    // 任务阶段泳道分配：时间重叠的阶段分到不同泳道，避免日历上互相覆盖
+    // 返回 { map: { phaseId: lane }, count: 泳道数 }
+    _phaseLanes(task) {
+        const map = {};
+        if (!task || !Array.isArray(task.phases)) return { map, count: 0 };
+        const items = task.phases.map((ph, i) => {
+            const s = ph.startDate ? this.parseDate(ph.startDate) : null;
+            const e = ph.endDate ? this.parseDate(ph.endDate) : s;
+            return {
+                ph, i,
+                key: ph.id || ('idx' + i),
+                startMs: s ? s.getTime() : null,
+                endMs: e ? e.getTime() : (s ? s.getTime() : null)
+            };
+        });
+        // 开始早的排前面；无日期的排最后
+        items.sort((a, b) => {
+            const av = a.startMs === null ? Number.MAX_SAFE_INTEGER : a.startMs;
+            const bv = b.startMs === null ? Number.MAX_SAFE_INTEGER : b.startMs;
+            return av - bv || a.i - b.i;
+        });
+        const laneEnds = []; // 每条泳道最后一个阶段的结束时间
+        items.forEach(it => {
+            if (it.startMs === null) {
+                // 无日期：各自独占一条泳道，避免全部叠在一起
+                map[it.key] = laneEnds.length;
+                laneEnds.push(Infinity);
+                return;
+            }
+            // 日期为闭区间，故用严格小于判断不重叠
+            let lane = laneEnds.findIndex(end => end < it.startMs);
+            if (lane === -1) {
+                lane = laneEnds.length;
+                laneEnds.push(it.endMs);
+            } else {
+                laneEnds[lane] = it.endMs;
+            }
+            map[it.key] = lane;
+        });
+        return { map, count: laneEnds.length };
+    }
+
+    // 阶段迷你条单行高度（px）
+    static PHASE_ROW_H = 16;
+
+    // 计算阶段在任务条内的定位（百分比 left/width + 泳道 lane），相对任务条本身
     // weekStartMidnight: 该周的周一零点 Date；segStartOffset/segEndOffset: 当前段在周内的偏移(0-6)
     _phaseBarPositions(task, weekStartMidnight, segStartOffset, segEndOffset) {
         if (!task || !Array.isArray(task.phases) || task.phases.length === 0) return [];
@@ -656,14 +701,16 @@ class ProjectManager {
         segRightMs.setDate(segRightMs.getDate() + segEndOffset);
         // 段的覆盖范围（天数），用作分母计算百分比
         const segSpan = segEndOffset - segStartOffset + 1; // ≥1
+        const laneInfo = this._phaseLanes(task);
         const positions = [];
-        task.phases.forEach(ph => {
+        task.phases.forEach((ph, idx) => {
             if (!ph.name) return;
+            const lane = laneInfo.map[ph.id || ('idx' + idx)] || 0;
             const pStart = ph.startDate ? this.parseDate(ph.startDate) : null;
             const pEnd = ph.endDate ? this.parseDate(ph.endDate) : (pStart || null);
             if (!pStart) {
                 // 无日期：平均分布
-                positions.push({ phase: ph, left: 0, width: 100 });
+                positions.push({ phase: ph, left: 0, width: 100, lane });
                 return;
             }
             let ps = pStart, pe = pEnd || pStart;
@@ -676,7 +723,8 @@ class ProjectManager {
             positions.push({
                 phase: ph,
                 left: (relLeft / segSpan) * 100,
-                width: (relWidth / segSpan) * 100
+                width: (relWidth / segSpan) * 100,
+                lane
             });
         });
         return positions;
@@ -1444,7 +1492,10 @@ class ProjectManager {
         // 第一遍：贪心分配泳道，记录每条泳道的最大高度
         for (const t of tasks) {
             const hasPhases = !!(t.task.phases && t.task.phases.some(p => p.name));
-            t.barHeight = hasPhases ? BASE_BAR_HEIGHT + 14 : BASE_BAR_HEIGHT;
+            // 阶段重叠时会分到多条泳道，任务条需按阶段泳道数增高，避免阶段互相遮挡
+            const phaseLaneCount = hasPhases ? this._phaseLanes(t.task).count : 0;
+            t.phaseLaneCount = phaseLaneCount;
+            t.barHeight = BASE_BAR_HEIGHT + (phaseLaneCount > 0 ? phaseLaneCount * this.constructor.PHASE_ROW_H : 0);
             // 找第一条结束时间早于此任务开始的泳道放入
             let laneIdx = lanes.findIndex(l => l.endOffset < t.startOffset);
             if (laneIdx === -1) {
@@ -1663,10 +1714,16 @@ class ProjectManager {
                     const phasePositions = hasPhases
                         ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
                         : [];
-                    const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
-                        const phDone = p.phase.done === true;
-                        return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
-                    }).join('')}</div>` : '';
+                    const phaseBarsHtml = phasePositions.length ? (() => {
+                        const rowH = this.constructor.PHASE_ROW_H;
+                        const maxLane = Math.max(...phasePositions.map(x => x.lane || 0));
+                        const areaH = (maxLane + 1) * rowH;
+                        const bars = phasePositions.map(p => {
+                            const phDone = p.phase.done === true;
+                            return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;top:${(p.lane || 0) * rowH}px;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
+                        }).join('');
+                        return `<div class="bar-phases" style="height:${areaH}px">${bars}</div>`;
+                    })() : '';
                     return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
                         style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                         <div class="bar-title">${nameWithDays}</div>
@@ -1786,10 +1843,16 @@ class ProjectManager {
                 const phasePositions = hasPhases
                     ? this._phaseBarPositions(t.task, weekStartMidnight, seg.startOffset, seg.endOffset)
                     : [];
-                const phaseBarsHtml = phasePositions.length ? `<div class="bar-phases">${phasePositions.map(p => {
-                    const phDone = p.phase.done === true;
-                    return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
-                }).join('')}</div>` : '';
+                const phaseBarsHtml = phasePositions.length ? (() => {
+                    const rowH = this.constructor.PHASE_ROW_H;
+                    const maxLane = Math.max(...phasePositions.map(x => x.lane || 0));
+                    const areaH = (maxLane + 1) * rowH;
+                    const bars = phasePositions.map(p => {
+                        const phDone = p.phase.done === true;
+                        return `<div class="phase-mini-bar ${phDone ? 'phase-done' : ''}" style="left:${p.left}%;width:${p.width}%;top:${(p.lane || 0) * rowH}px;background:${(isArchived || phDone) ? '#cbd5e1' : c};color:${(isArchived || phDone) ? '#64748b' : '#fff'}" title="${p.phase.name}${phDone ? '（已完成）' : ''}">${p.phase.name}</div>`;
+                    }).join('');
+                    return `<div class="bar-phases" style="height:${areaH}px">${bars}</div>`;
+                })() : '';
                 return `<div class="day-bar-item ${isArchived ? 'archived-bar' : ''} ${t.task.workdaysOnly ? 'workday-only-bar' : ''} ${hasPhases ? 'has-phases' : ''}" data-event-id="${t.task.id}"
                     style="left:${left}%;width:${width}%;top:${top}px;height:${barH}px;background:${isArchived ? '#e2e8f0' : c + '22'};color:${isArchived ? '#94a3b8' : c};border:1px solid ${isArchived ? '#cbd5e1' : c}">
                     <div class="bar-title">${nameWithDays}</div>
@@ -2862,20 +2925,69 @@ class ProjectManager {
         const done = phase ? (phase.done || false) : false;
         wrap.innerHTML = `
             <div class="flex items-center gap-2">
+                <span class="phase-drag-handle" draggable="true" title="拖拽调整阶段顺序">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
+                </span>
                 <input type="text" class="phase-name-input flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="阶段名称" value="${name.replace(/"/g, '&quot;')}">
                 <input type="date" class="phase-start-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${start}">
                 <span class="text-gray-400 text-xs">~</span>
                 <input type="date" class="phase-end-input px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" value="${end}">
                 <label class="phase-done-label" title="标记该阶段为已完成">
                     <input type="checkbox" class="phase-done-input" ${done ? 'checked' : ''}>
-                    <span class="phase-done-text">Done</span>
                 </label>
                 <button type="button" onclick="app.removeTaskPhaseRow(this)" class="phase-remove-btn" title="删除该阶段">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                 </button>
             </div>
         `;
+        this._initPhaseRowDrag(wrap);
         container.appendChild(wrap);
+    }
+
+    // 任务阶段行拖拽排序
+    _initPhaseRowDrag(wrap) {
+        const handle = wrap.querySelector('.phase-drag-handle');
+        if (handle) {
+            handle.addEventListener('dragstart', (e) => {
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', wrap.dataset.phaseId || '');
+                this._draggingPhaseRow = wrap;
+                wrap.classList.add('phase-dragging');
+            });
+            handle.addEventListener('dragend', () => {
+                wrap.classList.remove('phase-dragging');
+                this._draggingPhaseRow = null;
+                document.querySelectorAll('.task-phase-row').forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+            });
+        }
+        wrap.addEventListener('dragover', (e) => {
+            const dragged = this._draggingPhaseRow;
+            if (!dragged || dragged === wrap) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = wrap.getBoundingClientRect();
+            const after = (e.clientY - rect.top) > rect.height / 2;
+            wrap.classList.toggle('drag-over-top', !after);
+            wrap.classList.toggle('drag-over-bottom', after);
+        });
+        wrap.addEventListener('dragleave', () => {
+            wrap.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+        wrap.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const dragged = this._draggingPhaseRow;
+            if (!dragged || dragged === wrap) return;
+            const rect = wrap.getBoundingClientRect();
+            const after = (e.clientY - rect.top) > rect.height / 2;
+            if (after) {
+                wrap.after(dragged);
+            } else {
+                wrap.before(dragged);
+            }
+            wrap.classList.remove('drag-over-top', 'drag-over-bottom');
+            this._draggingPhaseRow = null;
+        });
     }
 
     removeTaskPhaseRow(btn) {

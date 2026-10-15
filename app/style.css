@@ -967,6 +967,15 @@ tr.task-row:hover .drag-handle svg {
 .task-phase-row {
     padding: 2px 0;
 }
+/* 阶段行不撑破弹窗：名称可收缩，日期固定窄宽，删除/完成控件始终可见 */
+.task-phase-row .phase-name-input {
+    min-width: 0;
+}
+.task-phase-row .phase-start-input,
+.task-phase-row .phase-end-input {
+    width: 128px;
+    flex-shrink: 0;
+}
 .task-phase-row .phase-remove-btn {
     color: #ef4444;
     padding: 4px;
@@ -978,16 +987,14 @@ tr.task-row:hover .drag-handle svg {
     background: #fee2e2;
 }
 
-/* 日历任务条：任务阶段中间行（按日期定位的迷你条） */
+/* 日历任务条：任务阶段中间行（按日期定位的迷你条，可多泳道避免重叠） */
 .day-bar-item .bar-phases {
     position: relative;
-    height: 14px;
     margin: 2px 0;
     pointer-events: none;
 }
 .day-bar-item .phase-mini-bar {
     position: absolute;
-    top: 0;
     height: 14px;
     border-radius: 3px;
     font-size: 9px;
@@ -1026,17 +1033,13 @@ tr.task-row:hover .drag-handle svg {
     opacity: 0.7;
 }
 
-/* 任务阶段行：Done 复选框 */
+/* 任务阶段行：Done 复选框（仅单选框，无文字） */
 .task-phase-row .phase-done-label {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+    padding: 2px 6px;
     border-radius: 6px;
     background-color: #f1f5f9;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 600;
     cursor: pointer;
     user-select: none;
     transition: all 0.15s;
@@ -1046,16 +1049,39 @@ tr.task-row:hover .drag-handle svg {
     background-color: #e2e8f0;
 }
 .task-phase-row .phase-done-input {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
     accent-color: #16a34a;
     cursor: pointer;
+    margin: 0;
 }
-.task-phase-row .phase-done-input:checked + .phase-done-text {
-    color: #16a34a;
+
+/* 任务阶段行：拖拽手柄与拖拽状态 */
+.task-phase-row .phase-drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: grab;
+    color: #cbd5e1;
+    transition: color 0.15s;
 }
-.task-phase-row .phase-done-input:checked {
-    /* 勾选态视觉强化 */
+.task-phase-row .phase-drag-handle:hover {
+    color: #64748b;
+}
+.task-phase-row .phase-drag-handle:active {
+    cursor: grabbing;
+}
+.task-phase-row.phase-dragging {
+    opacity: 0.4;
+    background: #eff6ff;
+    border-radius: 6px;
+}
+.task-phase-row.drag-over-top {
+    border-top: 2px solid #3b82f6;
+}
+.task-phase-row.drag-over-bottom {
+    border-bottom: 2px solid #3b82f6;
 }
 
 /* ---------- 隐藏栏（吸附底部，不随页面滚动） ---------- */
