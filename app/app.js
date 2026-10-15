@@ -922,7 +922,18 @@ class ProjectManager {
         container.scrollTop = savedScrollTop;
         container.scrollLeft = savedScrollLeft;
         const newCalScroll = document.querySelector('.calendar-scroll-area');
-        if (newCalScroll) newCalScroll.scrollTop = savedCalScrollTop;
+        if (newCalScroll) {
+            // 滚轮切换月份时，落到新月份的对应边界，保证上下滑动可无缝续接
+            const edge = this._pendingCalScrollEdge;
+            if (edge === 'bottom') {
+                newCalScroll.scrollTop = newCalScroll.scrollHeight;
+            } else if (edge === 'top') {
+                newCalScroll.scrollTop = 0;
+            } else {
+                newCalScroll.scrollTop = savedCalScrollTop;
+            }
+        }
+        this._pendingCalScrollEdge = null;
     }
  
     renderAll() {
@@ -2610,7 +2621,37 @@ class ProjectManager {
         const gridId = this.calendarType === 'month' ? 'calendarGrid' : 'weekGrid';
         const grid = document.getElementById(gridId);
         if (!grid) return;
- 
+
+        // 鼠标滚轮切换月份（保留上月/下月按钮与内部纵向滚动）
+        if (this.calendarType === 'month') {
+            const scrollArea = document.querySelector('.calendar-scroll-area');
+            if (scrollArea) {
+                scrollArea.addEventListener('wheel', (e) => {
+                    if (Math.abs(e.deltaY) < 1) return;
+                    // 内容超出且尚未到边界时，交还原生纵向滚动
+                    const canScroll = scrollArea.scrollHeight > scrollArea.clientHeight + 1;
+                    if (canScroll) {
+                        const atTop = scrollArea.scrollTop <= 0;
+                        const atBottom = scrollArea.scrollTop + scrollArea.clientHeight >= scrollArea.scrollHeight - 1;
+                        if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) return;
+                    }
+                    e.preventDefault();
+                    // 节流，避免滚轮/触控板惯性一次跳过多个月
+                    const now = Date.now();
+                    if (now - (this._lastWheelSwitchAt || 0) < 160) return;
+                    this._lastWheelSwitchAt = now;
+                    // 向上翻月落到上月底部、向下翻月落到下月顶部，保证连续滑动可无缝续接
+                    if (e.deltaY < 0) {
+                        this._pendingCalScrollEdge = 'bottom';
+                        this.prevMonth();
+                    } else {
+                        this._pendingCalScrollEdge = 'top';
+                        this.nextMonth();
+                    }
+                }, { passive: false });
+            }
+        }
+
         // 绑定任务条拖拽和点击
         grid.querySelectorAll('.day-bar-item').forEach(bar => {
             bar.onmousedown = (e) => {
