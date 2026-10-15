@@ -35,6 +35,10 @@ class ProjectManager {
         this._lastCalRecenterAt = 0;       // 重排节流
         this._calRailAnimating = false;    // 按钮平滑滚动动画进行中
         this._calRailAnimTimer = null;
+        this._preserveCalRail = false;     // 编辑/拖拽后保持日历轨道滚动位置，避免跳回月初
+        this._lastTap = null;              // 记录上一次轻点，用于识别双击/双触打开任务弹窗
+        this._undoStack = [];              // 撤回栈（最多保留 10 步）
+        this._undoPushed = false;          // 本次拖拽手势是否已入栈
  
         // 颜色池，用于日历事件
         this.colors = [
@@ -244,10 +248,16 @@ class ProjectManager {
         // 点击外部关闭多选下拉框
         document.addEventListener('click', (e) => {
             document.querySelectorAll('.project-multiselect-wrapper.open').forEach(w => {
-                if (!w.contains(e.target)) w.classList.remove('open');
+                if (!w.contains(e.target)) {
+                    w.classList.remove('open');
+                    this._resetFilterDropdown(w.querySelector('.project-multiselect-dropdown, .project-fav-add-dropdown'));
+                }
             });
             document.querySelectorAll('.project-fav-add-wrapper.open').forEach(w => {
-                if (!w.contains(e.target)) w.classList.remove('open');
+                if (!w.contains(e.target)) {
+                    w.classList.remove('open');
+                    this._resetFilterDropdown(w.querySelector('.project-multiselect-dropdown, .project-fav-add-dropdown'));
+                }
             });
         });
 
@@ -333,7 +343,10 @@ class ProjectManager {
         const node = this.findNode(taskId);
         if (!node) return;
         if (!confirm(`确定删除任务「${node.name}」吗？`)) return;
+        // 删除前记录快照，支持撤回
+        this._pushUndo();
         this.closeTaskModal();
+        this._preserveCalRail = true;
         this.deleteNode(taskId);
     }
 
@@ -912,6 +925,9 @@ class ProjectManager {
         // 保存滚动位置（修复刷新后回顶部的问题）
         const savedScrollTop = container.scrollTop;
         const savedScrollLeft = container.scrollLeft;
+        // 保存日历轨道滚动位置（编辑/拖拽后保持原视图，不跳回月初）
+        const oldCalScroll = document.querySelector('.calendar-scroll-area');
+        const savedCalTop = oldCalScroll ? oldCalScroll.scrollTop : null;
 
         if (this.view === 'table') {
             container.innerHTML = this.renderTableView();
@@ -934,21 +950,27 @@ class ProjectManager {
 
         // 月视图：还原“月份轨道”的滚动位置，保证连续滑动切换月份
         const newCalScroll = document.querySelector('.calendar-scroll-area');
-        if (newCalScroll && this.calendarType === 'month') {
-            const rail = newCalScroll.querySelector('.calendar-month-rail');
-            const centerBlock = rail && rail.children[1];
-            if (centerBlock) {
-                const restore = this._pendingRailRestore;
-                if (restore) {
-                    // 按滚动前的视觉位置精确定位，实现无跳动续接
-                    newCalScroll.scrollTop = centerBlock.offsetTop - restore.viewportY;
-                } else {
-                    // 默认将当前月对齐到视口顶部
-                    newCalScroll.scrollTop = centerBlock.offsetTop;
+        if (newCalScroll) {
+            // 编辑任务/拖拽后：优先按滚动前的位置原样恢复，避免跳回本月月初
+            if (this._preserveCalRail && savedCalTop != null && !this._pendingRailRestore) {
+                newCalScroll.scrollTop = savedCalTop;
+            } else if (this.calendarType === 'month') {
+                const rail = newCalScroll.querySelector('.calendar-month-rail');
+                const centerBlock = rail && rail.children[1];
+                if (centerBlock) {
+                    const restore = this._pendingRailRestore;
+                    if (restore) {
+                        // 按滚动前的视觉位置精确定位，实现无跳动续接
+                        newCalScroll.scrollTop = centerBlock.offsetTop - restore.viewportY;
+                    } else {
+                        // 默认将当前月对齐到视口顶部
+                        newCalScroll.scrollTop = centerBlock.offsetTop;
+                    }
                 }
             }
         }
         this._pendingRailRestore = null;
+        this._preserveCalRail = false;
     }
  
     renderAll() {
@@ -1163,6 +1185,31 @@ class ProjectManager {
         }, 2600);
     }
  
+    // ---------- 撤回（最多 10 步，防止误操作） ----------
+    // 在修改数据前调用，先把当前数据快照入栈
+    _pushUndo() {
+        try {
+            this._undoStack.push(JSON.parse(JSON.stringify(this.data)));
+            // 只保留最近 10 步
+            while (this._undoStack.length > 10) this._undoStack.shift();
+        } catch (e) {
+            console.error('撤回快照失败：', e);
+        }
+    }
+
+    undo() {
+        if (!this._undoStack || this._undoStack.length === 0) {
+            this.showToast('没有可撤回的操作', 'warning');
+            return;
+        }
+        const snapshot = this._undoStack.pop();
+        this.data = snapshot;
+        // 撤回后保持日历当前视图位置，避免跳回月初
+        this._preserveCalRail = true;
+        this.renderAll();
+        this.showToast(`已撤回（剩余 ${this._undoStack.length} 步）`);
+    }
+
     openSyncModal() {
         const { token, id } = this.getGistConfig();
         document.getElementById('gistToken').value = token;
@@ -1595,7 +1642,7 @@ class ProjectManager {
         return `
             <div class="project-filter-bar">
                 <div class="project-multiselect-wrapper">
-                    <div class="project-multiselect-trigger" onclick="this.parentElement.classList.toggle('open')">
+                    <div class="project-multiselect-trigger" onclick="app.toggleProjectDropdown(this)">
                         <span class="project-multiselect-label">${selectedNames}</span>
                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                     </div>
@@ -1609,15 +1656,71 @@ class ProjectManager {
                 </div>
                 <div class="project-fav-btns">
                     ${favBtns}
-                    <div class="project-fav-add-wrapper">
-                        <button class="project-fav-add-btn" onclick="this.parentElement.classList.toggle('open');event.stopPropagation();" title="添加常用项目">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                        </button>
-                        <div class="project-fav-add-dropdown">${addFavOptions}</div>
-                    </div>
+                </div>
+                <div class="project-fav-add-wrapper">
+                    <button class="project-fav-add-btn" onclick="app.toggleFavAddDropdown(this)" title="添加常用项目">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                    </button>
+                    <div class="project-fav-add-dropdown">${addFavOptions}</div>
                 </div>
             </div>
         `;
+    }
+
+    // 移动端：项目筛选栏是横向滚动容器（overflow:hidden 会裁剪下拉），
+    // 打开下拉时改用 fixed 定位跟随触发器，确保下拉箭头可点、下拉可见
+    _placeFilterDropdown(dd, anchor, minWidth) {
+        if (!dd || !this.isMobile()) return;
+        const rect = anchor.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const w = Math.min(minWidth, vw - 16);
+        dd.style.position = 'fixed';
+        dd.style.width = w + 'px';
+        dd.style.minWidth = w + 'px';
+        dd.style.left = Math.max(8, Math.min(rect.left, vw - w - 8)) + 'px';
+        dd.style.top = (rect.bottom + 6) + 'px';
+        dd.style.maxHeight = '260px';
+        dd.style.zIndex = '1000';
+    }
+
+    _resetFilterDropdown(dd) {
+        if (!dd) return;
+        dd.style.position = '';
+        dd.style.width = '';
+        dd.style.minWidth = '';
+        dd.style.left = '';
+        dd.style.top = '';
+        dd.style.maxHeight = '';
+        dd.style.zIndex = '';
+    }
+
+    _closeOtherFilterDropdowns(keep) {
+        document.querySelectorAll('.project-multiselect-wrapper.open, .project-fav-add-wrapper.open').forEach(w => {
+            if (w !== keep) {
+                w.classList.remove('open');
+                this._resetFilterDropdown(w.querySelector('.project-multiselect-dropdown, .project-fav-add-dropdown'));
+            }
+        });
+    }
+
+    toggleProjectDropdown(trigger) {
+        const wrapper = trigger.parentElement;
+        const willOpen = !wrapper.classList.contains('open');
+        this._closeOtherFilterDropdowns(wrapper);
+        wrapper.classList.toggle('open', willOpen);
+        if (willOpen) {
+            this._placeFilterDropdown(wrapper.querySelector('.project-multiselect-dropdown'), trigger, 260);
+        }
+    }
+
+    toggleFavAddDropdown(btn) {
+        const wrapper = btn.parentElement;
+        const willOpen = !wrapper.classList.contains('open');
+        this._closeOtherFilterDropdowns(wrapper);
+        wrapper.classList.toggle('open', willOpen);
+        if (willOpen) {
+            this._placeFilterDropdown(wrapper.querySelector('.project-fav-add-dropdown'), btn, 180);
+        }
     }
 
     // 2.0 搜索输入（防抖，只渲染主视图不渲染树）
@@ -1686,6 +1789,10 @@ class ProjectManager {
                         <h2 class="calendar-title" id="calendarTitle">${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月</h2>
                         <div class="ml-auto flex items-center gap-3">
                             <span class="text-xs text-gray-400">滚轮/触控板连续滑动切换月份 · 拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
+                            <button onclick="app.undo()" class="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm font-medium transition-colors" title="撤回上一步（最多10步）">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l-4-4m0 0l4-4m-4 4h11a5 5 0 010 10h-3"></path></svg>
+                                撤回
+                            </button>
                             <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                                 新增任务
@@ -2006,6 +2113,10 @@ class ProjectManager {
                         <h2 class="calendar-title">${title}</h2>
                         <div class="ml-auto flex items-center gap-3">
                             <span class="text-xs text-gray-400">拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
+                            <button onclick="app.undo()" class="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm font-medium transition-colors" title="撤回上一步（最多10步）">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l-4-4m0 0l4-4m-4 4h11a5 5 0 010 10h-3"></path></svg>
+                                撤回
+                            </button>
                             <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                                 新增任务
@@ -2735,6 +2846,9 @@ class ProjectManager {
         const task = this.findNode(taskId);
         if (!task) return;
 
+        // 修改前记录快照，支持撤回（表格内拖拽排序同样可撤回）
+        this._pushUndo();
+
         // 从原环节移除
         const fromStage = this.findNode(fromStageId);
         if (fromStage && fromStage.children) {
@@ -2787,6 +2901,8 @@ class ProjectManager {
                 const node = this.findNode(eventId);
                 if (!node) return;
 
+                // 重置本次手势的撤回标记（一次拖拽只入栈一步）
+                this._undoPushed = false;
                 // 记录起点（含按下时间，用于抑制滑动起始阶段的误触拖拽）
                 this._pdStart = { x: e.clientX, y: e.clientY, moved: false, time: Date.now() };
                 if (resizeHandle) {
@@ -2801,14 +2917,6 @@ class ProjectManager {
                     this._movingEvent = null;
                     this._dragPending = true;
                     this._pendingDragId = eventId;
-                }
-            };
-            bar.ondblclick = (e) => {
-                e.stopPropagation();
-                const eventId = bar.dataset.eventId;
-                const node = this.findNode(eventId);
-                if (node && node.type === 'task') {
-                    this.openTaskModal(node.startDate, node.endDate || node.startDate, eventId);
                 }
             };
         });
@@ -2851,24 +2959,34 @@ class ProjectManager {
             });
 
             const endDrag = (e) => {
-                // pointercancel 表示浏览器接管了手势（如纵向滚动），此时不应触发轻点打开弹窗
+                // pointercancel 表示浏览器接管了手势（如纵向滚动），此时不应触发轻点/双击
                 const wasCancelled = !!(e && e.type === 'pointercancel');
                 const wasPendingTap = this._dragPending;
                 const tapId = this._pendingDragId;
                 this._dragPending = false;
                 this._pendingDragId = null;
                 if (!this._movingEvent && !this._resizingEvent) {
-                    // 轻点（未达拖拽阈值）：移动端打开任务弹窗；浏览器接管滚动时不触发
-                    if (wasPendingTap && tapId && this.isMobile() && !wasCancelled) {
+                    // 轻点（未达拖拽阈值）：记录双击/双触，第二次命中才打开任务弹窗
+                    if (wasCancelled) {
+                        // 浏览器接管纵向滚动，清空待配对轻点，避免误判双击
+                        this._lastTap = null;
+                    } else if (wasPendingTap && tapId) {
                         const node = this.findNode(tapId);
                         if (node && node.type === 'task') {
-                            this.openTaskModal(node.startDate, node.endDate || node.startDate, tapId);
+                            const now = Date.now();
+                            if (this._lastTap && this._lastTap.id === tapId && now - this._lastTap.time <= 350) {
+                                // 命中双击（桌面）/双触（移动）：打开任务弹窗
+                                this._lastTap = null;
+                                this.openTaskModal(node.startDate, node.endDate || node.startDate, tapId);
+                            } else {
+                                // 首次轻点：记下，等待第二次轻点
+                                this._lastTap = { id: tapId, time: now };
+                            }
                         }
                     }
                     this._pdStart = null;
                     return;
                 }
-                const movedEvent = this._movingEvent;
                 document.body.classList.remove('dragging-move', 'dragging-resize');
                 this.hideDragColHighlight();
                 this._movingEvent = null;
@@ -2876,6 +2994,8 @@ class ProjectManager {
                 this._pdStart = null;
                 if (this._needsRerender) {
                     this._needsRerender = false;
+                    // 拖拽后保持日历当前滚动位置，避免跳回当月第 1 天
+                    this._preserveCalRail = true;
                     this.renderAll();
                 }
             };
@@ -2938,27 +3058,39 @@ class ProjectManager {
             const node = this.findNode(this._movingEvent.id);
             if (node && node.startDate) {
                 const newStartDate = this.formatDateISO(newDate);
-                const diffDays = Math.round((this.parseDate(newStartDate) - this.parseDate(node.startDate)) / 86400000);
-                node.startDate = newStartDate;
-                if (node.endDate) {
-                    const end = this.parseDate(node.endDate);
-                    end.setDate(end.getDate() + diffDays);
-                    node.endDate = this.formatDateISO(end);
+                if (newStartDate !== node.startDate) {
+                    // 本次手势首次真正改动数据前记录快照，支持撤回（一次拖拽只记一步）
+                    if (!this._undoPushed) {
+                        this._pushUndo();
+                        this._undoPushed = true;
+                    }
+                    const diffDays = Math.round((this.parseDate(newStartDate) - this.parseDate(node.startDate)) / 86400000);
+                    node.startDate = newStartDate;
+                    if (node.endDate) {
+                        const end = this.parseDate(node.endDate);
+                        end.setDate(end.getDate() + diffDays);
+                        node.endDate = this.formatDateISO(end);
+                    }
+                    this._needsRerender = true;
                 }
                 // 显示列高亮（整列覆盖）
                 this.showDragColHighlight(container, colLeft, 100 / 7);
-                this._needsRerender = true;
             }
         } else if (this._resizingEvent) {
             const node = this.findNode(this._resizingEvent.id);
             if (node && node.startDate) {
                 const newEndDate = this.formatDateISO(newDate);
-                if (this.parseDate(newEndDate) >= this.parseDate(node.startDate)) {
+                if (this.parseDate(newEndDate) >= this.parseDate(node.startDate) && newEndDate !== node.endDate) {
+                    // 首次真正改动数据前记录快照，支持撤回
+                    if (!this._undoPushed) {
+                        this._pushUndo();
+                        this._undoPushed = true;
+                    }
                     node.endDate = newEndDate;
-                    // 显示竖线指示
-                    this.showDragColLine(container, colLeft + 100 / 7);
                     this._needsRerender = true;
                 }
+                // 显示竖线指示
+                this.showDragColLine(container, colLeft + 100 / 7);
             }
         }
     }
@@ -3290,6 +3422,9 @@ class ProjectManager {
         if (!projectId) { alert('请选择项目'); return; }
         if (!stageId) { alert('请选择环节'); return; }
 
+        // 修改前记录快照，支持撤回
+        this._pushUndo();
+
         if (this._taskModalData.taskId) {
             // 编辑现有任务
             const task = this.findNode(this._taskModalData.taskId);
@@ -3342,6 +3477,8 @@ class ProjectManager {
         }
  
         this.closeTaskModal();
+        // 更新后保持日历当前视图位置，避免跳回月初
+        this._preserveCalRail = true;
         this.renderAll();
     }
  
