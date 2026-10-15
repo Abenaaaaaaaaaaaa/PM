@@ -1336,36 +1336,44 @@ body { -webkit-tap-highlight-color: transparent; }
     #archiveSearchInput { width: 100% !important; }
 
     /* ===== 日历视图 ===== */
-    #mainContent .calendar-nav {
-        flex-wrap: wrap;
+    /* 顶部工具栏：月份导航 + 项目筛选 合并为单行，整体高度与导航按钮一致，为下方月历腾出纵向空间 */
+    .calendar-toolbar {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
         gap: 6px;
         margin-bottom: 8px;
     }
-    .calendar-nav-btn { padding: 5px 9px; font-size: 12px; }
-    .calendar-title {
-        font-size: 14px;
-        min-width: 0;
-        text-align: left;
-        flex: 1 1 auto;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+    /* 用 display:contents 让导航内部元素直接参与工具栏排布，便于把「新增任务」排到最右端 */
+    .calendar-toolbar .calendar-nav { display: contents; }
+    .calendar-toolbar .calendar-nav-btn {
+        order: 1;
+        flex: 0 0 auto;
+        height: 30px;
+        padding: 0 8px;
+        font-size: 12px;
     }
-    .calendar-nav .text-xs { display: none; }
-    /* 新增任务按钮收为图标按钮，内联到导航行，不独占一整行，把纵向空间让给月历网格 */
-    .calendar-nav > .ml-auto { margin-left: 0 !important; width: auto; flex: 0 0 auto; }
-    .calendar-nav > .ml-auto button {
+    /* 月份标题已由月历块内的月份标签展示，移动端隐藏以腾出横向空间 */
+    .calendar-toolbar .calendar-title { display: none; }
+    .calendar-toolbar .calendar-nav .text-xs { display: none; }
+    .calendar-toolbar .calendar-nav > .ml-auto {
+        order: 99;
+        margin-left: 0 !important;
+        flex: 0 0 auto;
+    }
+    .calendar-toolbar .calendar-nav > .ml-auto button {
         width: auto;
+        height: 30px;
+        padding: 0 8px;
         justify-content: center;
-        padding: 5px 8px;
         font-size: 0; /* 隐藏文字，仅保留 + 图标 */
     }
-    .calendar-nav > .ml-auto button svg { width: 16px; height: 16px; }
+    .calendar-toolbar .calendar-nav > .ml-auto button svg { width: 16px; height: 16px; }
     .calendar-header-cell { padding: 6px 2px; font-size: 11px; }
     .calendar-month-label { padding: 6px 10px; font-size: 12px; }
     .calendar-scroll-area {
-        max-height: calc(100vh - 180px);
-        max-height: calc(100dvh - 180px);
+        max-height: calc(100vh - 145px);
+        max-height: calc(100dvh - 145px);
     }
     .calendar-week-row { min-height: 80px; }
     .calendar-day { min-height: 80px; padding: 3px 2px; }
@@ -1385,12 +1393,37 @@ body { -webkit-tap-highlight-color: transparent; }
     .day-bar-item .bar-meta { display: none; }
     .day-bar-item .phase-mini-bar { height: 12px; line-height: 12px; font-size: 8px; }
     .day-bar-item .bar-resize-handle { width: 10px; }
-    /* 项目筛选栏：下拉触发器收窄为图标按钮，常用 chip 同行显示以节省纵向空间 */
-    .project-filter-bar { gap: 6px; margin-bottom: 8px; }
-    .project-multiselect-wrapper { flex: 0 0 auto; min-width: 0; }
-    .project-multiselect-label { display: none; }
-    .project-multiselect-trigger { padding: 7px 8px; justify-content: center; }
-    .project-fav-btn, .project-fav-chip { padding: 6px 10px; font-size: 12px; }
+    /* 项目筛选：作为工具栏中的可横向滚动区，保持与导航同高、单行不换行 */
+    .calendar-toolbar .project-filter-bar {
+        order: 50;
+        flex: 1 1 auto;
+        min-width: 0;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 6px;
+        margin-bottom: 0;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .calendar-toolbar .project-filter-bar::-webkit-scrollbar { display: none; }
+    .calendar-toolbar .project-multiselect-wrapper { flex: 0 0 auto; min-width: 0; }
+    .calendar-toolbar .project-multiselect-label { display: none; }
+    .calendar-toolbar .project-multiselect-trigger {
+        height: 30px;
+        padding: 0 8px;
+        justify-content: center;
+    }
+    .calendar-toolbar .project-fav-btns { flex: 0 0 auto; flex-wrap: nowrap; }
+    .calendar-toolbar .project-fav-btn,
+    .calendar-toolbar .project-fav-chip {
+        flex: 0 0 auto;
+        height: 30px;
+        padding: 0 10px;
+        font-size: 12px;
+    }
+    .calendar-toolbar .project-fav-chip { padding: 0 4px 0 10px; }
+    .calendar-toolbar .project-fav-add-btn { flex: 0 0 auto; width: 30px; height: 30px; }
 
     /* ===== 隐藏栏 ===== */
     .hidden-bar { max-height: 60vh; }
@@ -1447,8 +1480,8 @@ body { -webkit-tap-highlight-color: transparent; }
     header { padding: 8px 10px !important; }
     header h1 { font-size: 14px !important; }
     .calendar-scroll-area {
-        max-height: calc(100vh - 190px);
-        max-height: calc(100dvh - 190px);
+        max-height: calc(100vh - 155px);
+        max-height: calc(100dvh - 155px);
     }
     #mainContent { padding: 8px !important; }
 }

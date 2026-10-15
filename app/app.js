@@ -1678,20 +1678,22 @@ class ProjectManager {
  
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div class="calendar-nav">
-                    <button onclick="app.prevMonth()" class="calendar-nav-btn">上月</button>
-                    <button onclick="app.goToday()" class="calendar-nav-btn">今天</button>
-                    <button onclick="app.nextMonth()" class="calendar-nav-btn">下月</button>
-                    <h2 class="calendar-title" id="calendarTitle">${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月</h2>
-                    <div class="ml-auto flex items-center gap-3">
-                        <span class="text-xs text-gray-400">滚轮/触控板连续滑动切换月份 · 拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
-                        <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                            新增任务
-                        </button>
+                <div class="calendar-toolbar">
+                    <div class="calendar-nav">
+                        <button onclick="app.prevMonth()" class="calendar-nav-btn">上月</button>
+                        <button onclick="app.goToday()" class="calendar-nav-btn">今天</button>
+                        <button onclick="app.nextMonth()" class="calendar-nav-btn">下月</button>
+                        <h2 class="calendar-title" id="calendarTitle">${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月</h2>
+                        <div class="ml-auto flex items-center gap-3">
+                            <span class="text-xs text-gray-400">滚轮/触控板连续滑动切换月份 · 拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
+                            <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                新增任务
+                            </button>
+                        </div>
                     </div>
+                    ${filterTabs}
                 </div>
-                ${filterTabs}
                 <div class="calendar-header">${header}</div>
                 <div class="calendar-scroll-area">
                     <div class="calendar-month-rail" id="calendarGrid">
@@ -1996,20 +1998,22 @@ class ProjectManager {
  
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div class="calendar-nav">
-                    <button onclick="app.prevWeek()" class="calendar-nav-btn">上周</button>
-                    <button onclick="app.goToday()" class="calendar-nav-btn">本周</button>
-                    <button onclick="app.nextWeek()" class="calendar-nav-btn">下周</button>
-                    <h2 class="calendar-title">${title}</h2>
-                    <div class="ml-auto flex items-center gap-3">
-                        <span class="text-xs text-gray-400">拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
-                        <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                            新增任务
-                        </button>
+                <div class="calendar-toolbar">
+                    <div class="calendar-nav">
+                        <button onclick="app.prevWeek()" class="calendar-nav-btn">上周</button>
+                        <button onclick="app.goToday()" class="calendar-nav-btn">本周</button>
+                        <button onclick="app.nextWeek()" class="calendar-nav-btn">下周</button>
+                        <h2 class="calendar-title">${title}</h2>
+                        <div class="ml-auto flex items-center gap-3">
+                            <span class="text-xs text-gray-400">拖拽任务条移动 · 拖拽右边缘改时长 · 双击编辑</span>
+                            <button onclick="app.addNewTask()" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                新增任务
+                            </button>
+                        </div>
                     </div>
+                    ${filterTabs}
                 </div>
-                ${filterTabs}
                 <div class="calendar-scroll-area">
                     <div class="week-view">
                         <div class="week-header-grid">${header}</div>
