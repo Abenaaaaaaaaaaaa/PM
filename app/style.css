@@ -1216,3 +1216,218 @@ tr.project-header-row:hover .project-drag-handle svg {
 #mainContent.has-hidden-bar {
     padding-bottom: 48vh;
 }
+
+/* ---------- 移动端基础（PC 端默认隐藏 / 触摸优化） ---------- */
+.mobile-only { display: none !important; }
+#sidebarBackdrop { display: none; }
+html { -webkit-text-size-adjust: 100%; }
+body { -webkit-tap-highlight-color: transparent; }
+/* 日历任务条：禁止浏览器接管触摸滚动，改为拖拽交互 */
+.day-bar-item { touch-action: none; }
+
+/* ---------- 移动端适配（≤ 768px，重点机型：小米14 / 安卓16） ---------- */
+@media (max-width: 768px) {
+    /* ===== 顶部导航：固定两行网格布局 =====
+       行1 = 菜单+标题 | 视图切换；行2 = 搜索框 | 同步按钮组 */
+    header {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 8px 12px !important;
+        padding-top: calc(8px + env(safe-area-inset-top)) !important;
+    }
+    /* 右侧容器透明化：其内部控件直接作为 header 的网格项 */
+    header > div:last-child { display: contents; }
+    header > div:first-child { grid-column: 1; grid-row: 1; min-width: 0; }
+    header > div:last-child > #calendarToggle + .bg-gray-100 { grid-column: 2; grid-row: 1; }
+    header > div:last-child > .relative { grid-column: 1; grid-row: 2; min-width: 0; }
+    header > div:last-child > .bg-gray-100 { grid-column: 2; grid-row: 2; }
+    /* 日历的「月历/周历」切换仅在日历视图出现，单独占一行 */
+    header > div:last-child > #calendarToggle { grid-column: 1 / -1; grid-row: 3; justify-self: start; }
+    #syncStatus { grid-column: 1 / -1; grid-row: 4; justify-self: end; font-size: 11px; }
+    .mobile-only { display: flex !important; }
+    .mobile-only-icon { display: flex !important; }
+    .hide-on-mobile { display: none !important; }
+    header h1 {
+        font-size: 15px !important;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    header .w-8.h-8 { width: 26px !important; height: 26px !important; }
+    header button { padding: 6px 8px !important; min-height: 34px; }
+    /* 搜索框自适应撑满第二行剩余宽度 */
+    #globalSearchInput { width: 100% !important; min-width: 100px; }
+    header > div:last-child > .relative #globalSearchInput { width: 100% !important; min-width: 100px; }
+
+    /* ===== 侧栏：改为抽屉式 ===== */
+    #sidebar, #sidebar.collapsed {
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: min(84vw, 320px) !important;
+        z-index: 46;
+        transform: translateX(-102%);
+        transition: transform 0.25s ease;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        border-right: 1px solid #e2e8f0 !important;
+        box-shadow: 4px 0 24px rgba(15, 23, 42, 0.18);
+        padding-top: env(safe-area-inset-top);
+    }
+    #sidebar.mobile-open { transform: translateX(0); }
+    #resizeHandle { display: none !important; }
+    #sidebarExpandBtn { display: none !important; }
+    #sidebarBackdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        z-index: 45;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+    }
+    #sidebarBackdrop.show { opacity: 1; pointer-events: auto; }
+    .tree-content { padding: 9px 8px; }
+    .tree-action-btn { padding: 5px; }
+    .tree-children { padding-left: 14px; }
+    /* 触摸端无 hover 态：树形操作按钮常驻显示 */
+    .tree-actions { display: flex !important; }
+
+    /* ===== 主内容区 ===== */
+    #mainContent { padding: 10px !important; }
+    #mainContent > .rounded-xl.p-6 { padding: 10px !important; }
+    #mainContent .px-6 {
+        padding-left: 4px !important;
+        padding-right: 4px !important;
+    }
+    #mainContent .py-4 {
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+    }
+    #mainContent.has-hidden-bar { padding-bottom: 58vh; }
+
+    /* ===== 表格视图 ===== */
+    .data-table { font-size: 12.5px; }
+    .data-table th,
+    .data-table td { padding: 7px 8px; }
+    .data-table th { font-size: 12px; }
+    #dataTable { min-width: 660px; }
+    #archiveTable { min-width: 1080px; }
+    .overflow-x-auto {
+        -webkit-overflow-scrolling: touch;
+    }
+    /* 表格卡片头部（标题 + 操作）换行 */
+    #mainContent .flex.justify-between.items-center {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    #archiveSearchInput { width: 100% !important; }
+
+    /* ===== 日历视图 ===== */
+    #mainContent .calendar-nav {
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+    .calendar-nav-btn { padding: 8px 14px; font-size: 13px; }
+    .calendar-title {
+        font-size: 15px;
+        min-width: 0;
+        text-align: left;
+        flex: 1 1 auto;
+    }
+    .calendar-nav .text-xs { display: none; }
+    .calendar-nav > .ml-auto { margin-left: 0 !important; width: 100%; }
+    .calendar-nav > .ml-auto button { width: 100%; justify-content: center; }
+    .calendar-header-cell { padding: 6px 2px; font-size: 11px; }
+    .calendar-month-label { padding: 6px 10px; font-size: 12px; }
+    .calendar-scroll-area {
+        max-height: calc(100vh - 290px);
+        max-height: calc(100dvh - 290px);
+    }
+    .calendar-week-row { min-height: 76px; }
+    .calendar-day { min-height: 76px; padding: 3px; }
+    .calendar-day-header { gap: 2px; margin-bottom: 2px; }
+    .calendar-day-number {
+        font-size: 11px;
+        width: 19px;
+        height: 19px;
+        margin-bottom: 0;
+    }
+    .calendar-holiday-tag { display: none; }
+    .calendar-day-tag { font-size: 8px; padding: 0 2px; margin-left: 1px; }
+    .day-bar-layer { top: 25px; }
+    .day-bar-item .bar-title { font-size: 9px; }
+    .day-bar-item .bar-meta { display: none; }
+    .day-bar-item .phase-mini-bar { height: 12px; line-height: 12px; font-size: 8px; }
+    .day-bar-item .bar-resize-handle { width: 10px; }
+    /* 项目筛选栏 */
+    .project-filter-bar { gap: 8px; margin-bottom: 10px; }
+    .project-multiselect-wrapper { flex: 1 1 100%; min-width: 0; }
+    .project-multiselect-label { max-width: none; }
+    .project-fav-btn, .project-fav-chip { padding: 7px 12px; }
+
+    /* ===== 隐藏栏 ===== */
+    .hidden-bar { max-height: 60vh; }
+    .hidden-bar.collapsed { max-height: 42px; }
+    .hidden-bar-head { padding: 9px 12px; gap: 6px; }
+    .hidden-bar-head .text-xs { font-size: 10px; }
+    .hidden-bar-body { padding: 10px 12px 14px; }
+    .hidden-project-head { flex-wrap: wrap; gap: 6px; }
+    .hidden-project-head > .flex:last-child { width: 100%; justify-content: flex-end; }
+
+    /* ===== 模态框 ===== */
+    #projectModal > div,
+    #inputModal > div,
+    #stageModal > div,
+    #taskModal > div,
+    #syncModal > div {
+        width: 94vw !important;
+        max-width: 94vw !important;
+        max-height: 88dvh !important;
+        max-height: 88vh !important;
+    }
+    #projectModal .px-6,
+    #inputModal .px-6,
+    #stageModal .px-6,
+    #taskModal .px-6,
+    #syncModal .px-6 {
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+    }
+    #taskModal .grid-cols-3 { grid-template-columns: 1fr !important; }
+    #taskModal .flex.items-center.gap-6 {
+        flex-wrap: wrap;
+        gap: 8px !important;
+        align-items: flex-start;
+    }
+    #taskModal .flex.items-center.gap-6 label { align-items: flex-start; }
+    /* 任务阶段行：窄屏固定折成两行（上行=手柄+阶段名，下行=起止日期+完成+删除），避免横向溢出 */
+    .task-phase-row > div { flex-wrap: wrap; row-gap: 6px; column-gap: 6px; }
+    .task-phase-row .phase-name-input { flex: 1 1 calc(100% - 30px); }
+    .task-phase-row .phase-start-input,
+    .task-phase-row .phase-end-input {
+        width: 108px;
+        flex: 0 0 108px;
+        min-width: 0;
+    }
+    #projectModal .grid-cols-2 { grid-template-columns: 1fr !important; }
+    /* 模态框底部按钮更易点按 */
+    #mainContent button,
+    .fixed button { min-height: 34px; }
+}
+
+/* 小屏手机（≤ 400px，如小米14 竖屏）进一步收紧 */
+@media (max-width: 400px) {
+    header { padding: 8px 10px !important; }
+    header h1 { font-size: 14px !important; }
+    .calendar-scroll-area {
+        max-height: calc(100vh - 300px);
+        max-height: calc(100dvh - 300px);
+    }
+    #mainContent { padding: 8px !important; }
+}

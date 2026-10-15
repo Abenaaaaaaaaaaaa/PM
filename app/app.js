@@ -250,6 +250,11 @@ class ProjectManager {
                 if (!w.contains(e.target)) w.classList.remove('open');
             });
         });
+
+        // 视口尺寸变化：桌面 ↔ 移动切换时同步侧栏状态
+        window.addEventListener('resize', () => {
+            if (!this.isMobile()) this.setSidebarDrawer(false);
+        });
     }
  
     // ---------- 工具方法 ----------
@@ -850,6 +855,8 @@ class ProjectManager {
     selectNode(id) {
         this.selectedNodeId = id;
         this.renderTree();
+        // 移动端点击树节点后收起抽屉，避免遮挡内容
+        if (this.isMobile()) this.closeSidebarDrawer();
         // 如果点击的是任务节点，打开编辑弹窗
         const node = this.findNode(id);
         if (node && node.type === 'task') {
@@ -1732,7 +1739,9 @@ class ProjectManager {
             });
  
             const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP, totalHeight } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
-            const weekHeight = Math.max(110, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
+            // 移动端压缩行高，减少纵向滚动
+            const baseRowH = this.isMobile() ? 78 : 110;
+            const weekHeight = Math.max(baseRowH, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
  
             const dayCells = week.map((d) => {
                 const isToday = this.isSameDay(d, today);
@@ -1907,7 +1916,9 @@ class ProjectManager {
         });
  
         const { tasks: layoutTasks, laneCount, BAR_HEIGHT, BAR_GAP, totalHeight } = this.layoutTaskLanes(weekTasks, weekStartMidnight);
-        const weekHeight = Math.max(220, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
+        // 移动端压缩周视图高度
+        const baseWeekH = this.isMobile() ? 160 : 220;
+        const weekHeight = Math.max(baseWeekH, 40 + (totalHeight || laneCount * (BAR_HEIGHT + BAR_GAP)));
  
         const filterTabs = this.renderProjectFilter(projects);
  
@@ -2359,13 +2370,22 @@ class ProjectManager {
     }
  
     // ---------- 侧栏折叠/展开 ----------
- 
+
+    // 是否移动端（与 style.css 断点保持一致）
+    isMobile() {
+        return !!(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+    }
+
     toggleSidebar() {
+        if (this.isMobile()) {
+            this.setSidebarDrawer(!document.getElementById('sidebar').classList.contains('mobile-open'));
+            return;
+        }
         this.sidebarCollapsed = !this.sidebarCollapsed;
         const sidebar = document.getElementById('sidebar');
         const handle = document.getElementById('resizeHandle');
         const expandBtn = document.getElementById('sidebarExpandBtn');
- 
+
         if (this.sidebarCollapsed) {
             sidebar.classList.add('collapsed');
             handle.classList.add('collapsed');
@@ -2376,6 +2396,19 @@ class ProjectManager {
             handle.classList.remove('collapsed');
             expandBtn.classList.add('hidden');
         }
+    }
+
+    // 移动端侧栏抽屉开关
+    setSidebarDrawer(open) {
+        const sidebar = document.getElementById('sidebar');
+        const backdrop = document.getElementById('sidebarBackdrop');
+        if (!sidebar) return;
+        sidebar.classList.toggle('mobile-open', !!open);
+        if (backdrop) backdrop.classList.toggle('show', !!open);
+    }
+
+    closeSidebarDrawer() {
+        this.setSidebarDrawer(false);
     }
  
     // ---------- 侧栏拖拽调节宽度 ----------
@@ -2740,15 +2773,18 @@ class ProjectManager {
             }
         }
 
-        // 绑定任务条拖拽和点击
+        // 绑定任务条拖拽（鼠标 + 触摸）与轻点编辑
         grid.querySelectorAll('.day-bar-item').forEach(bar => {
-            bar.onmousedown = (e) => {
+            bar.onpointerdown = (e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
                 e.stopPropagation();
                 const eventId = bar.dataset.eventId;
                 const resizeHandle = e.target.closest('.bar-resize-handle');
                 const node = this.findNode(eventId);
                 if (!node) return;
- 
+
+                // 记录起点，用于区分「轻点（打开弹窗）」与「拖拽（改日期）」
+                this._pdStart = { x: e.clientX, y: e.clientY, moved: false };
                 if (resizeHandle) {
                     this._resizingEvent = { id: eventId, startX: e.clientX, origEndDate: node.endDate || node.startDate };
                     document.body.classList.add('dragging-resize');
@@ -2756,7 +2792,6 @@ class ProjectManager {
                     this._movingEvent = { id: eventId, startX: e.clientX, origStartDate: node.startDate, origEndDate: node.endDate || node.startDate };
                     document.body.classList.add('dragging-move');
                 }
-                e.preventDefault();
             };
             bar.ondblclick = (e) => {
                 e.stopPropagation();
@@ -2767,83 +2802,124 @@ class ProjectManager {
                 }
             };
         });
- 
+
         // document 级监听只绑定一次
         if (!this._calendarDocListenersAdded) {
             this._calendarDocListenersAdded = true;
- 
-            document.addEventListener('mousemove', (e) => {
+
+            document.addEventListener('pointermove', (e) => {
                 if (!this._movingEvent && !this._resizingEvent) return;
- 
-                const container = this.calendarType === 'month'
-                    ? e.target.closest('.calendar-week-row')
-                    : e.target.closest('.week-content-grid');
-                if (!container) {
-                    this.hideDragColHighlight();
-                    return;
-                }
- 
-                const rect = container.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
-                const colLeft = (dayIdx / 7) * 100;
- 
-                let baseDate;
-                if (this.calendarType === 'month') {
-                    const rowEl = e.target.closest('.calendar-week-row');
-                    const blockEl = e.target.closest('.calendar-month-block');
-                    if (!rowEl || !blockEl) return;
-                    // 按所在月份块内的行索引取基准日期，兼容多月份轨道
-                    const rowIdx = Array.from(blockEl.querySelectorAll('.calendar-week-row')).indexOf(rowEl);
-                    const dates = this.getMonthDates(this._parseMonthISO(blockEl.dataset.month));
-                    baseDate = dates[rowIdx * 7];
-                } else {
-                    baseDate = this.getWeekDates()[0];
-                }
-                if (!baseDate) return;
- 
-                const newDate = new Date(baseDate);
-                newDate.setDate(baseDate.getDate() + dayIdx);
- 
-                if (this._movingEvent) {
-                    const node = this.findNode(this._movingEvent.id);
-                    if (node && node.startDate) {
-                        const newStartDate = this.formatDateISO(newDate);
-                        const diffDays = Math.round((this.parseDate(newStartDate) - this.parseDate(node.startDate)) / 86400000);
-                        node.startDate = newStartDate;
-                        if (node.endDate) {
-                            const end = this.parseDate(node.endDate);
-                            end.setDate(end.getDate() + diffDays);
-                            node.endDate = this.formatDateISO(end);
-                        }
-                        // 显示列高亮（整列覆盖）
-                        this.showDragColHighlight(container, colLeft, 100 / 7);
-                        this._needsRerender = true;
+                // 触摸轻点阈值：位移小于 6px 视为轻点，不触发日期移动
+                if (this._pdStart && !this._pdStart.moved) {
+                    if (Math.abs(e.clientX - this._pdStart.x) > 6 || Math.abs(e.clientY - this._pdStart.y) > 6) {
+                        this._pdStart.moved = true;
                     }
-                } else if (this._resizingEvent) {
-                    const node = this.findNode(this._resizingEvent.id);
-                    if (node && node.startDate) {
-                        const newEndDate = this.formatDateISO(newDate);
-                        if (this.parseDate(newEndDate) >= this.parseDate(node.startDate)) {
-                            node.endDate = newEndDate;
-                            // 显示竖线指示
-                            this.showDragColLine(container, colLeft + 100 / 7);
-                            this._needsRerender = true;
-                        }
-                    }
+                    if (!this._pdStart.moved) return;
                 }
+                this._updateCalendarDrag(e.clientX, e.clientY);
             });
- 
-            document.addEventListener('mouseup', () => {
+
+            const endDrag = () => {
+                if (!this._movingEvent && !this._resizingEvent) { this._pdStart = null; return; }
+                const movedEvent = this._movingEvent;
+                const wasTap = !!(this._pdStart && !this._pdStart.moved);
                 document.body.classList.remove('dragging-move', 'dragging-resize');
                 this.hideDragColHighlight();
                 this._movingEvent = null;
                 this._resizingEvent = null;
+                this._pdStart = null;
                 if (this._needsRerender) {
                     this._needsRerender = false;
                     this.renderAll();
+                } else if (wasTap && movedEvent && this.isMobile()) {
+                    // 移动端无双击：轻点任务条直接打开任务弹窗
+                    const node = this.findNode(movedEvent.id);
+                    if (node && node.type === 'task') {
+                        this.openTaskModal(node.startDate, node.endDate || node.startDate, movedEvent.id);
+                    }
                 }
-            });
+            };
+            document.addEventListener('pointerup', endDrag);
+            document.addEventListener('pointercancel', endDrag);
+        }
+    }
+
+    // 拖拽位移：按指针位置定位所在周行/月份块与日期列（鼠标与触摸通用）
+    _updateCalendarDrag(clientX, clientY) {
+        let hit = document.elementFromPoint ? document.elementFromPoint(clientX, clientY) : null;
+
+        if (this.calendarType === 'month') {
+            let container = hit ? hit.closest('.calendar-week-row') : null;
+            let blockEl = hit ? hit.closest('.calendar-month-block') : null;
+            if (!container || !blockEl) {
+                // 指针落在任务条自身时，回退到该任务条所属的周行/月份块
+                const activeId = (this._movingEvent || this._resizingEvent || {}).id;
+                const bar = activeId ? document.querySelector(`.day-bar-item[data-event-id="${activeId}"]`) : null;
+                if (bar) {
+                    container = container || bar.closest('.calendar-week-row');
+                    blockEl = blockEl || bar.closest('.calendar-month-block');
+                }
+            }
+            if (!container || !blockEl) { this.hideDragColHighlight(); return; }
+
+            const rect = container.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
+            const colLeft = (dayIdx / 7) * 100;
+
+            // 按所在月份块内的行索引取基准日期，兼容多月份轨道
+            const rowIdx = Array.from(blockEl.querySelectorAll('.calendar-week-row')).indexOf(container);
+            const dates = this.getMonthDates(this._parseMonthISO(blockEl.dataset.month));
+            const baseDate = dates[rowIdx * 7];
+            if (!baseDate) return;
+            this._applyCalendarDrag(container, baseDate, dayIdx, colLeft);
+        } else {
+            let container = hit ? hit.closest('.week-content-grid') : null;
+            if (!container) {
+                const activeId = (this._movingEvent || this._resizingEvent || {}).id;
+                const bar = activeId ? document.querySelector(`.day-bar-item[data-event-id="${activeId}"]`) : null;
+                container = bar ? bar.closest('.week-content-grid') : null;
+            }
+            if (!container) { this.hideDragColHighlight(); return; }
+
+            const rect = container.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
+            const colLeft = (dayIdx / 7) * 100;
+            this._applyCalendarDrag(container, this.getWeekDates()[0], dayIdx, colLeft);
+        }
+    }
+
+    _applyCalendarDrag(container, baseDate, dayIdx, colLeft) {
+        const newDate = new Date(baseDate);
+        newDate.setDate(baseDate.getDate() + dayIdx);
+
+        if (this._movingEvent) {
+            const node = this.findNode(this._movingEvent.id);
+            if (node && node.startDate) {
+                const newStartDate = this.formatDateISO(newDate);
+                const diffDays = Math.round((this.parseDate(newStartDate) - this.parseDate(node.startDate)) / 86400000);
+                node.startDate = newStartDate;
+                if (node.endDate) {
+                    const end = this.parseDate(node.endDate);
+                    end.setDate(end.getDate() + diffDays);
+                    node.endDate = this.formatDateISO(end);
+                }
+                // 显示列高亮（整列覆盖）
+                this.showDragColHighlight(container, colLeft, 100 / 7);
+                this._needsRerender = true;
+            }
+        } else if (this._resizingEvent) {
+            const node = this.findNode(this._resizingEvent.id);
+            if (node && node.startDate) {
+                const newEndDate = this.formatDateISO(newDate);
+                if (this.parseDate(newEndDate) >= this.parseDate(node.startDate)) {
+                    node.endDate = newEndDate;
+                    // 显示竖线指示
+                    this.showDragColLine(container, colLeft + 100 / 7);
+                    this._needsRerender = true;
+                }
+            }
         }
     }
  
