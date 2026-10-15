@@ -1222,8 +1222,8 @@ tr.project-header-row:hover .project-drag-handle svg {
 #sidebarBackdrop { display: none; }
 html { -webkit-text-size-adjust: 100%; }
 body { -webkit-tap-highlight-color: transparent; }
-/* 日历任务条：禁止浏览器接管触摸滚动，改为拖拽交互 */
-.day-bar-item { touch-action: none; }
+/* 日历任务条：允许纵向滚动（切换月份），横向拖拽由 JS 处理 */
+.day-bar-item { touch-action: pan-y; }
 
 /* ---------- 移动端适配（≤ 768px，重点机型：小米14 / 安卓16） ---------- */
 @media (max-width: 768px) {
@@ -1313,9 +1313,17 @@ body { -webkit-tap-highlight-color: transparent; }
     /* ===== 表格视图 ===== */
     .data-table { font-size: 12.5px; }
     .data-table th,
-    .data-table td { padding: 7px 8px; }
+    .data-table td { padding: 8px 8px; word-break: break-word; }
     .data-table th { font-size: 12px; }
-    #dataTable { min-width: 660px; }
+    /* 任务名列：确保长名称正常换行而非竖排 */
+    .data-table td .editable-cell.inline-block {
+        display: inline !important;
+        word-break: break-word;
+        white-space: normal;
+    }
+    /* 表格操作按钮加大触摸区域 */
+    .data-table td button { min-height: 30px; padding: 4px 8px; }
+    #dataTable { min-width: 720px; }
     #archiveTable { min-width: 1080px; }
     .overflow-x-auto {
         -webkit-overflow-scrolling: touch;
@@ -1349,19 +1357,21 @@ body { -webkit-tap-highlight-color: transparent; }
         max-height: calc(100vh - 290px);
         max-height: calc(100dvh - 290px);
     }
-    .calendar-week-row { min-height: 76px; }
-    .calendar-day { min-height: 76px; padding: 3px; }
+    .calendar-week-row { min-height: 80px; }
+    .calendar-day { min-height: 80px; padding: 3px 2px; }
     .calendar-day-header { gap: 2px; margin-bottom: 2px; }
     .calendar-day-number {
-        font-size: 11px;
-        width: 19px;
-        height: 19px;
+        font-size: 12px;
+        width: 20px;
+        height: 20px;
+        line-height: 20px;
         margin-bottom: 0;
     }
     .calendar-holiday-tag { display: none; }
     .calendar-day-tag { font-size: 8px; padding: 0 2px; margin-left: 1px; }
-    .day-bar-layer { top: 25px; }
-    .day-bar-item .bar-title { font-size: 9px; }
+    .day-bar-layer { top: 26px; }
+    .day-bar-item { height: 38px; padding: 2px 6px; border-radius: 5px; }
+    .day-bar-item .bar-title { font-size: 10px; line-height: 1.3; }
     .day-bar-item .bar-meta { display: none; }
     .day-bar-item .phase-mini-bar { height: 12px; line-height: 12px; font-size: 8px; }
     .day-bar-item .bar-resize-handle { width: 10px; }

@@ -1362,7 +1362,7 @@ class ProjectManager {
                 <div class="overflow-x-auto">
                     <table class="data-table" id="dataTable">
                         <colgroup>
-                            <col style="width:140px"><col style="width:auto"><col style="width:120px"><col style="width:120px"><col style="width:90px"><col style="width:80px"><col style="width:70px">
+                            <col style="width:110px"><col style="width:200px"><col style="width:105px"><col style="width:105px"><col style="width:70px"><col style="width:70px"><col style="width:50px">
                         </colgroup>
                         <thead>
                             <tr>
@@ -2783,14 +2783,20 @@ class ProjectManager {
                 const node = this.findNode(eventId);
                 if (!node) return;
 
-                // 记录起点，用于区分「轻点（打开弹窗）」与「拖拽（改日期）」
+                // 记录起点
                 this._pdStart = { x: e.clientX, y: e.clientY, moved: false };
                 if (resizeHandle) {
+                    // 拖拽右边缘改时长：直接进入 resize 状态
                     this._resizingEvent = { id: eventId, startX: e.clientX, origEndDate: node.endDate || node.startDate };
                     document.body.classList.add('dragging-resize');
+                    this._dragPending = false;
+                    this._pendingDragId = null;
                 } else {
-                    this._movingEvent = { id: eventId, startX: e.clientX, origStartDate: node.startDate, origEndDate: node.endDate || node.startDate };
-                    document.body.classList.add('dragging-move');
+                    // 移动端：先进入"待决"状态，需超过阈值且以横向位移为主才真正开始拖拽
+                    // 这样纵向滑动（切换月份/滚动页面）不会误触任务条
+                    this._movingEvent = null;
+                    this._dragPending = true;
+                    this._pendingDragId = eventId;
                 }
             };
             bar.ondblclick = (e) => {
@@ -2808,21 +2814,53 @@ class ProjectManager {
             this._calendarDocListenersAdded = true;
 
             document.addEventListener('pointermove', (e) => {
-                if (!this._movingEvent && !this._resizingEvent) return;
-                // 触摸轻点阈值：位移小于 6px 视为轻点，不触发日期移动
-                if (this._pdStart && !this._pdStart.moved) {
-                    if (Math.abs(e.clientX - this._pdStart.x) > 6 || Math.abs(e.clientY - this._pdStart.y) > 6) {
-                        this._pdStart.moved = true;
+                // 待决状态：判断是横向拖拽还是纵向滚动
+                if (this._dragPending && this._pdStart && this._pendingDragId) {
+                    const dx = e.clientX - this._pdStart.x;
+                    const dy = e.clientY - this._pdStart.y;
+                    const absDx = Math.abs(dx);
+                    const absDy = Math.abs(dy);
+                    // 阈值 12px（比之前的 6px 更宽松，避免手指抖动误触）
+                    if (absDx <= 12 && absDy <= 12) return;
+                    // 纵向位移为主 → 放行给浏览器滚动（切换月份/页面滚动）
+                    if (absDy > absDx) {
+                        this._dragPending = false;
+                        this._pendingDragId = null;
+                        this._pdStart = null;
+                        return;
                     }
-                    if (!this._pdStart.moved) return;
+                    // 横向位移为主 → 启动拖拽
+                    const dragId = this._pendingDragId;
+                    this._dragPending = false;
+                    this._pendingDragId = null;
+                    const dragNode = this.findNode(dragId);
+                    if (!dragNode) return;
+                    this._movingEvent = { id: dragId, startX: this._pdStart.x, origStartDate: dragNode.startDate, origEndDate: dragNode.endDate || dragNode.startDate };
+                    this._pdStart.moved = true;
+                    document.body.classList.add('dragging-move');
                 }
+
+                if (!this._movingEvent && !this._resizingEvent) return;
                 this._updateCalendarDrag(e.clientX, e.clientY);
             });
 
             const endDrag = () => {
-                if (!this._movingEvent && !this._resizingEvent) { this._pdStart = null; return; }
+                const wasPendingTap = this._dragPending;
+                const tapId = this._pendingDragId;
+                this._dragPending = false;
+                this._pendingDragId = null;
+                if (!this._movingEvent && !this._resizingEvent) {
+                    // 轻点（未达拖拽阈值）：移动端打开任务弹窗
+                    if (wasPendingTap && tapId && this.isMobile()) {
+                        const node = this.findNode(tapId);
+                        if (node && node.type === 'task') {
+                            this.openTaskModal(node.startDate, node.endDate || node.startDate, tapId);
+                        }
+                    }
+                    this._pdStart = null;
+                    return;
+                }
                 const movedEvent = this._movingEvent;
-                const wasTap = !!(this._pdStart && !this._pdStart.moved);
                 document.body.classList.remove('dragging-move', 'dragging-resize');
                 this.hideDragColHighlight();
                 this._movingEvent = null;
@@ -2831,12 +2869,6 @@ class ProjectManager {
                 if (this._needsRerender) {
                     this._needsRerender = false;
                     this.renderAll();
-                } else if (wasTap && movedEvent && this.isMobile()) {
-                    // 移动端无双击：轻点任务条直接打开任务弹窗
-                    const node = this.findNode(movedEvent.id);
-                    if (node && node.type === 'task') {
-                        this.openTaskModal(node.startDate, node.endDate || node.startDate, movedEvent.id);
-                    }
                 }
             };
             document.addEventListener('pointerup', endDrag);
