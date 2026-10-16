@@ -307,12 +307,32 @@ class ProjectManager {
     }
  
     deleteNode(id) {
+        // 先收集被删除子树的全部 id，用于清理各视图残留的引用状态
+        const removedIds = [];
+        const collect = (node) => {
+            removedIds.push(node.id);
+            if (node.children) node.children.forEach(collect);
+        };
+        const target = this.findNode(id);
+        if (target) collect(target);
+
         const parent = this.findParent(id);
         if (parent) {
             parent.children = parent.children.filter(c => c.id !== id);
         } else {
             this.data = this.data.filter(c => c.id !== id);
         }
+
+        // 清理残留引用：否则删除被选中的项目后，日历仍按旧选择过滤导致列表为空
+        removedIds.forEach(rid => {
+            this.selectedProjectIds.delete(rid);
+            this.favProjectIds.delete(rid);
+            this.tableCollapsed.delete(rid);
+            this.expandedNodes.delete(rid);
+            if (this._hiddenExpanded) this._hiddenExpanded.delete(rid);
+        });
+        this.saveFavProjects();
+
         this.renderAll();
     }
 
@@ -2257,7 +2277,7 @@ class ProjectManager {
                                 </tr>
                             ` : filtered.map(row => `
                                 <tr>
-                                    <td><input type="checkbox" class="archive-checkbox" value="${row.taskId}" class="rounded text-blue-600"></td>
+                                    <td><input type="checkbox" class="archive-checkbox rounded text-blue-600" value="${row.taskId}"></td>
                                     <td class="text-blue-700 font-medium">${row.customer}</td>
                                     <td class="text-green-700 font-medium">${row.project}</td>
                                     <td>
