@@ -36,6 +36,7 @@ class ProjectManager {
         this._calRailAnimating = false;    // 按钮平滑滚动动画进行中
         this._calRailAnimTimer = null;
         this._preserveCalRail = false;     // 编辑/拖拽后保持日历轨道滚动位置，避免跳回月初
+        this._scrollToToday = false;       // 点击“今天”后滚动定位到当天所在行（而非月初）
         this._lastTap = null;              // 记录上一次轻点，用于识别双击/双触打开任务弹窗
         this._undoStack = [];              // 撤回栈（最多保留 10 步）
         this._undoPushed = false;          // 本次拖拽手势是否已入栈
@@ -962,6 +963,20 @@ class ProjectManager {
                     if (restore) {
                         // 按滚动前的视觉位置精确定位，实现无跳动续接
                         newCalScroll.scrollTop = centerBlock.offsetTop - restore.viewportY;
+                    } else if (this._scrollToToday) {
+                        // 点击“今天”：把当天所在的行对齐到视口顶部（而非月初第 1 天）
+                        const todayCell = newCalScroll.querySelector('.calendar-day.today');
+                        if (todayCell) {
+                            const areaRect = newCalScroll.getBoundingClientRect();
+                            const cellRect = todayCell.getBoundingClientRect();
+                            // 减去该月份块粘性标题的高度，避免当天行被标题遮挡
+                            const block = todayCell.closest('.calendar-month-block');
+                            const label = block && block.querySelector('.calendar-month-label');
+                            const labelH = label ? label.offsetHeight : 0;
+                            newCalScroll.scrollTop = newCalScroll.scrollTop + (cellRect.top - areaRect.top) - labelH;
+                        } else {
+                            newCalScroll.scrollTop = centerBlock.offsetTop;
+                        }
                     } else {
                         // 默认将当前月对齐到视口顶部
                         newCalScroll.scrollTop = centerBlock.offsetTop;
@@ -971,6 +986,7 @@ class ProjectManager {
         }
         this._pendingRailRestore = null;
         this._preserveCalRail = false;
+        this._scrollToToday = false;
     }
  
     renderAll() {
@@ -2343,6 +2359,10 @@ class ProjectManager {
  
     goToday() {
         this.currentDate = new Date();
+        // 月视图：滚动到“当天”所在的那一行，而不是本月第 1 天
+        if (this.view === 'calendar' && this.calendarType === 'month') {
+            this._scrollToToday = true;
+        }
         this.renderMain();
     }
  
