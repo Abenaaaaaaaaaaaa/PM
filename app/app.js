@@ -37,6 +37,7 @@ class ProjectManager {
         this._calRailAnimTimer = null;
         this._preserveCalRail = false;     // 编辑/拖拽后保持日历轨道滚动位置，避免跳回月初
         this._scrollToToday = false;       // 点击“今天”后滚动定位到当天所在行（而非月初）
+        this._openFilterDropdown = null;   // 当前展开的筛选下拉（'multi' | 'fav'），用于重渲染后恢复
         this._lastTap = null;              // 记录上一次轻点，用于识别双击/双触打开任务弹窗
         this._undoStack = [];              // 撤回栈（最多保留 10 步）
         this._undoPushed = false;          // 本次拖拽手势是否已入栈
@@ -248,18 +249,22 @@ class ProjectManager {
 
         // 点击外部关闭多选下拉框
         document.addEventListener('click', (e) => {
+            let closedAny = false;
             document.querySelectorAll('.project-multiselect-wrapper.open').forEach(w => {
                 if (!w.contains(e.target)) {
                     w.classList.remove('open');
                     this._resetFilterDropdown(w.querySelector('.project-multiselect-dropdown, .project-fav-add-dropdown'));
+                    closedAny = true;
                 }
             });
             document.querySelectorAll('.project-fav-add-wrapper.open').forEach(w => {
                 if (!w.contains(e.target)) {
                     w.classList.remove('open');
                     this._resetFilterDropdown(w.querySelector('.project-multiselect-dropdown, .project-fav-add-dropdown'));
+                    closedAny = true;
                 }
             });
+            if (closedAny) this._openFilterDropdown = null;
         });
 
         // 视口尺寸变化：桌面 ↔ 移动切换时同步侧栏状态
@@ -307,6 +312,8 @@ class ProjectManager {
     }
  
     deleteNode(id) {
+        // 删除前记录快照，支持撤回（表格/树/弹窗删除统一走这里）
+        this._pushUndo();
         // 先收集被删除子树的全部 id，用于清理各视图残留的引用状态
         const removedIds = [];
         const collect = (node) => {
@@ -364,8 +371,6 @@ class ProjectManager {
         const node = this.findNode(taskId);
         if (!node) return;
         if (!confirm(`确定删除任务「${node.name}」吗？`)) return;
-        // 删除前记录快照，支持撤回
-        this._pushUndo();
         this.closeTaskModal();
         this._preserveCalRail = true;
         this.deleteNode(taskId);
@@ -379,6 +384,8 @@ class ProjectManager {
         if (!project || project.type !== 'project') return;
         project.hidden = true;
         project.hiddenAt = new Date().toISOString();
+        // 若该项目正被筛选选中，一并移出选择，避免日历因失效选择而空白
+        this.selectedProjectIds.delete(projectId);
         this.renderAll();
     }
 
@@ -1530,6 +1537,8 @@ class ProjectManager {
                 if (node.type === 'customer') {
                     walk(node.children || [], node, project);
                 } else if (node.type === 'project') {
+                    // 隐藏的项目不在日历视图中展示（与表格视图一致）
+                    if (node.hidden) return;
                     walk(node.children || [], customer, node);
                 } else if (node.type === 'stage') {
                     const color = node.color || '#64748b';
@@ -1568,7 +1577,7 @@ class ProjectManager {
         const walk = (nodes) => {
             nodes.forEach(node => {
                 if (node.type === 'project') {
-                    projects.push({ id: node.id, name: node.name });
+                    if (!node.hidden) projects.push({ id: node.id, name: node.name });
                 }
                 if (node.children) walk(node.children);
             });
@@ -1745,7 +1754,10 @@ class ProjectManager {
         this._closeOtherFilterDropdowns(wrapper);
         wrapper.classList.toggle('open', willOpen);
         if (willOpen) {
+            this._openFilterDropdown = 'multi';
             this._placeFilterDropdown(wrapper.querySelector('.project-multiselect-dropdown'), trigger, 260);
+        } else {
+            this._openFilterDropdown = null;
         }
     }
 
@@ -1755,8 +1767,23 @@ class ProjectManager {
         this._closeOtherFilterDropdowns(wrapper);
         wrapper.classList.toggle('open', willOpen);
         if (willOpen) {
+            this._openFilterDropdown = 'fav';
             this._placeFilterDropdown(wrapper.querySelector('.project-fav-add-dropdown'), btn, 180);
+        } else {
+            this._openFilterDropdown = null;
         }
+    }
+
+    // 重渲染后恢复筛选下拉的展开状态，支持连续多选（勾选项目不再让下拉收起）
+    _restoreOpenFilterDropdown() {
+        if (!this._openFilterDropdown) return;
+        const isMulti = this._openFilterDropdown === 'multi';
+        const wrapper = document.querySelector(isMulti ? '.project-multiselect-wrapper' : '.project-fav-add-wrapper');
+        if (!wrapper) return;
+        wrapper.classList.add('open');
+        const dd = wrapper.querySelector(isMulti ? '.project-multiselect-dropdown' : '.project-fav-add-dropdown');
+        const anchor = wrapper.querySelector(isMulti ? '.project-multiselect-trigger' : '.project-fav-add-btn');
+        if (dd && anchor) this._placeFilterDropdown(dd, anchor, isMulti ? 260 : 180);
     }
 
     // 2.0 搜索输入（防抖，只渲染主视图不渲染树）
@@ -2674,11 +2701,13 @@ class ProjectManager {
                 input.focus();
                 if (input.select) input.select();
  
+                let cancelled = false;
                 const commit = () => {
+                    if (cancelled) return;
                     const newVal = input.value.trim();
-                    if (type === 'date') {
-                        node[field] = newVal;
-                    } else {
+                    if (newVal !== (node[field] || '')) {
+                        // 首次真正改动前记录快照，支持撤回
+                        this._pushUndo();
                         node[field] = newVal;
                     }
                     this.renderAll();
@@ -2690,6 +2719,8 @@ class ProjectManager {
                         ev.preventDefault();
                         input.blur();
                     } else if (ev.key === 'Escape') {
+                        // 取消编辑：标记后阻止随后的 blur 提交
+                        cancelled = true;
                         cell.textContent = originalText;
                         cell.classList.remove('editing');
                     }
@@ -2922,6 +2953,9 @@ class ProjectManager {
         const gridId = this.calendarType === 'month' ? 'calendarGrid' : 'weekGrid';
         const grid = document.getElementById(gridId);
         if (!grid) return;
+
+        // 重渲染后恢复筛选下拉展开状态（保持连续多选）
+        this._restoreOpenFilterDropdown();
 
         // 月视图：连续滚动切换月份（由轨道滚动自然驱动，不再拦截滚轮）
         if (this.calendarType === 'month') {
