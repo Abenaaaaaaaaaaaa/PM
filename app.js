@@ -1511,6 +1511,58 @@ class ProjectManager {
         }
         return dates;
     }
+
+    // 给定某月 anchor（该月 1 号），返回该月的「严格归属周」：
+    // 一周归属给其周一所在的月份。相邻 block 用此规则自然衔接、零重叠。
+    _getMonthWeeks(anchorMonth) {
+        const year = anchorMonth.getFullYear();
+        const month = anchorMonth.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0).getDate();
+
+        // 该月所有日期对应的周一集合
+        const mondays = new Set();
+        for (let d = 1; d <= lastDay; d++) {
+            const date = new Date(year, month, d);
+            const dowMon = (date.getDay() + 6) % 7;
+            const mon = new Date(date);
+            mon.setDate(date.getDate() - dowMon);
+            mondays.add(this._dateKey(mon));
+        }
+        // 严格周一归属：周一属于当月 → 归属当月
+        const validMondays = [];
+        for (const key of mondays) {
+            const [y, m, dd] = key.split('-').map(Number);
+            if (m === month) validMondays.push(new Date(y, m, dd));
+        }
+        validMondays.sort((a, b) => a - b);
+
+        return validMondays.map(mon => this._mondayToWeek(mon));
+    }
+
+    _mondayToWeek(mon) {
+        const week = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(mon);
+            d.setDate(mon.getDate() + i);
+            week.push(d);
+        }
+        return week;
+    }
+
+    // 辅助：给定某月第一天，返回「周一属于该月」之外，必须补齐的首尾跨月周
+    // 策略：锚点 block 自己补第一天所在周 + 最后一天所在周；
+    // prev / next block 则跳过与锚点 block 首尾重叠的那一行。
+    _weekMondayOf(day) {
+        const dowMon = (day.getDay() + 6) % 7;
+        const mon = new Date(day);
+        mon.setDate(day.getDate() - dowMon);
+        return mon;
+    }
+
+    _dateKey(d) {
+        return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    }
  
     getWeekDates() {
         const year = this.currentDate.getFullYear();
@@ -1825,22 +1877,65 @@ class ProjectManager {
         this.renderMain();
     }
  
+    // 构造 3 段月份 block 的日期行（零重叠、每段首尾完整、相邻段无缝衔接）
+    _buildCalendarBlocks(prevAnchor, anchor, nextAnchor, today) {
+        // 每个 block 先独立渲染完整首尾（避免丢自己月的头尾跨周行）
+        const pWeeks = this._enrichMonthWeeks(prevAnchor);
+        const aWeeks = this._enrichMonthWeeks(anchor);
+        const nWeeks = this._enrichMonthWeeks(nextAnchor);
+
+        // prev 去掉与 anchor 首周重叠的末行
+        if (pWeeks.length && this._dateKey(pWeeks[pWeeks.length - 1][0]) === this._dateKey(aWeeks[0][0])) {
+            pWeeks.pop();
+        }
+        // next 去掉与 anchor 末周重叠的首行
+        if (nWeeks.length && this._dateKey(nWeeks[0][0]) === this._dateKey(aWeeks[aWeeks.length - 1][0])) {
+            nWeeks.shift();
+        }
+        // prev / next 可能还要去重（极端跨年/跨月：补末周和补首周恰好是同一行）
+        if (pWeeks.length >= 2 && this._dateKey(pWeeks[pWeeks.length - 2][0]) === this._dateKey(pWeeks[pWeeks.length - 1][0])) {
+            pWeeks.pop();
+        }
+        if (nWeeks.length >= 2 && this._dateKey(nWeeks[0][0]) === this._dateKey(nWeeks[1][0])) {
+            nWeeks.shift();
+        }
+
+        return [
+            this._renderMonthBlockWithWeeks(prevAnchor, pWeeks, today),
+            this._renderMonthBlockWithWeeks(anchor, aWeeks, today),
+            this._renderMonthBlockWithWeeks(nextAnchor, nWeeks, today),
+        ].join('');
+    }
+
+    // 给定某月 1 号，返回该月完整覆盖的周集：严格周一归属 + 补齐首尾跨月周
+    _enrichMonthWeeks(anchorMonth) {
+        const weeks = this._getMonthWeeks(anchorMonth);
+        const firstMon = this._weekMondayOf(new Date(anchorMonth.getFullYear(), anchorMonth.getMonth(), 1));
+        const lastMon = this._weekMondayOf(new Date(anchorMonth.getFullYear(), anchorMonth.getMonth() + 1, 0));
+        const has = mon => weeks.some(w => this._dateKey(w[0]) === this._dateKey(mon));
+        if (!has(firstMon)) weeks.unshift(this._mondayToWeek(firstMon));
+        if (!has(lastMon)) weeks.push(this._mondayToWeek(lastMon));
+        return weeks;
+    }
+
     renderMonthCalendar() {
         const anchor = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
-        const months = [this._addMonths(anchor, -1), anchor, this._addMonths(anchor, 1)];
+        const prevAnchor = this._addMonths(anchor, -1);
+        const nextAnchor = this._addMonths(anchor, 1);
         const today = new Date();
         const weekDayNames = ['一', '二', '三', '四', '五', '六', '日'];
         const projects = this.getProjectsList();
- 
+
         // 项目筛选 UI（多选下拉 + 常用快捷按钮）
         const filterTabs = this.renderProjectFilter(projects);
- 
+
         const header = weekDayNames.map(d =>
             `<div class="calendar-header-cell">${d}</div>`
         ).join('');
- 
+
         // 连续滑动：上月 / 当前月 / 下月 三段堆叠在同一条纵向滚动轨道上
-        const blocks = months.map(m => this._renderMonthBlock(m, today)).join('');
+        // 每段日期严格零重叠、锚点月首尾完整，相邻段无缝衔接
+        const blocks = this._buildCalendarBlocks(prevAnchor, anchor, nextAnchor, today);
  
         return `
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -1874,18 +1969,12 @@ class ProjectManager {
         `;
     }
  
-    // 单个自然月的日历块（月份标签 + 6 周网格）
-    _renderMonthBlock(monthDate, today) {
+    // 直接渲染带指定周行的月份 block（由轨道构造器调用）
+    _renderMonthBlockWithWeeks(monthDate, weeks, today) {
         const year = monthDate.getFullYear();
         const month = monthDate.getMonth();
-        const dates = this.getMonthDates(monthDate);
         const allTasks = this.collectTasks();
- 
-        const rows = [];
-        for (let i = 0; i < 6; i++) {
-            rows.push(this._renderMonthWeekRow(dates.slice(i * 7, i * 7 + 7), month, today, allTasks));
-        }
- 
+        const rows = weeks.map(w => this._renderMonthWeekRow(w, month, today, allTasks));
         return `
             <div class="calendar-month-block" data-month="${year}-${String(month + 1).padStart(2, '0')}">
                 <div class="calendar-month-label">${year}年 ${month + 1}月</div>
@@ -1895,7 +1984,11 @@ class ProjectManager {
             </div>
         `;
     }
- 
+
+    // 简单包装：用严格周集渲染（reflow 后单独调用）
+    _renderMonthBlock(monthDate, today) {
+        return this._renderMonthBlockWithWeeks(monthDate, this._getMonthWeeks(monthDate), today);
+    }
     // 单周行（日期格 + 跨天任务条）
     _renderMonthWeekRow(week, month, today, allTasks) {
             const weekStart = week[0];
@@ -1980,8 +2073,11 @@ class ProjectManager {
                 }).join('');
             }).join('');
 
+            // 给周行存一个周一日期属性，让拖拽逻辑能直接读到基准日期，
+            // 不再依赖 rowIdx + getMonthDates 的隐式映射（相邻月份块去重后行数动态变化）
+            const weekMondayKey = this._dateKey(weekStartMidnight).replace(/^(\d+)-(\d+)-(\d+)$/, (_, y, m, d) => `${y}-${String(+m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
             return `
-                <div class="calendar-week-row" style="min-height:${weekHeight}px">
+                <div class="calendar-week-row" data-week-monday="${weekMondayKey}" style="min-height:${weekHeight}px">
                     ${dayCells}
                     <div class="day-bar-layer">
                         ${taskBars}
@@ -3101,10 +3197,18 @@ class ProjectManager {
             const dayIdx = Math.max(0, Math.min(6, Math.floor((x / rect.width) * 7)));
             const colLeft = (dayIdx / 7) * 100;
 
-            // 按所在月份块内的行索引取基准日期，兼容多月份轨道
-            const rowIdx = Array.from(blockEl.querySelectorAll('.calendar-week-row')).indexOf(container);
-            const dates = this.getMonthDates(this._parseMonthISO(blockEl.dataset.month));
-            const baseDate = dates[rowIdx * 7];
+            // 直接从 week-row 的 data-week-monday 属性拿到该周周一日期，
+            // 不再依赖 rowIdx + getMonthDates 映射（去重后行数动态变化）
+            const weekMondayStr = container.getAttribute('data-week-monday');
+            let baseDate;
+            if (weekMondayStr) {
+                baseDate = this.parseDate(weekMondayStr);
+            } else {
+                // 兜底：旧逻辑，兼容没有 data 属性的场景
+                const rowIdx = Array.from(blockEl.querySelectorAll('.calendar-week-row')).indexOf(container);
+                const dates = this.getMonthDates(this._parseMonthISO(blockEl.dataset.month));
+                baseDate = dates[rowIdx * 7];
+            }
             if (!baseDate) return;
             this._applyCalendarDrag(container, baseDate, dayIdx, colLeft);
         } else {
