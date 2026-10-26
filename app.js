@@ -1005,8 +1005,18 @@ class ProjectManager {
                             newCalScroll.scrollTop = centerBlock.offsetTop;
                         }
                     } else {
-                        // 默认将当前月对齐到视口顶部
-                        newCalScroll.scrollTop = centerBlock.offsetTop;
+                        // 默认进入日历视图：把当天所在的那一行对齐到视口顶部
+                        const todayCell = newCalScroll.querySelector('.calendar-day.today');
+                        if (todayCell) {
+                            const areaRect = newCalScroll.getBoundingClientRect();
+                            const cellRect = todayCell.getBoundingClientRect();
+                            const block = todayCell.closest('.calendar-month-block');
+                            const label = block && block.querySelector('.calendar-month-label');
+                            const labelH = label ? label.offsetHeight : 0;
+                            newCalScroll.scrollTop = newCalScroll.scrollTop + (cellRect.top - areaRect.top) - labelH;
+                        } else {
+                            newCalScroll.scrollTop = centerBlock.offsetTop;
+                        }
                     }
                 }
             }
