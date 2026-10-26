@@ -36,7 +36,6 @@ class ProjectManager {
         this._calRailAnimating = false;    // 按钮平滑滚动动画进行中
         this._calRailAnimTimer = null;
         this._preserveCalRail = false;     // 编辑/拖拽后保持日历轨道滚动位置，避免跳回月初
-        this._scrollToToday = false;       // 点击“今天”后滚动定位到当天所在行（而非月初）
         this._openFilterDropdown = null;   // 当前展开的筛选下拉（'multi' | 'fav'），用于重渲染后恢复
         this._lastTap = null;              // 记录上一次轻点，用于识别双击/双触打开任务弹窗
         this._undoStack = [];              // 撤回栈（最多保留 10 步）
@@ -990,42 +989,41 @@ class ProjectManager {
                     if (restore) {
                         // 按滚动前的视觉位置精确定位，实现无跳动续接
                         newCalScroll.scrollTop = centerBlock.offsetTop - restore.viewportY;
-                    } else if (this._scrollToToday) {
-                        // 点击“今天”：把当天所在的行对齐到视口顶部（而非月初第 1 天）
-                        const todayCell = newCalScroll.querySelector('.calendar-day.today');
-                        if (todayCell) {
-                            const areaRect = newCalScroll.getBoundingClientRect();
-                            const cellRect = todayCell.getBoundingClientRect();
-                            // 减去该月份块粘性标题的高度，避免当天行被标题遮挡
-                            const block = todayCell.closest('.calendar-month-block');
-                            const label = block && block.querySelector('.calendar-month-label');
-                            const labelH = label ? label.offsetHeight : 0;
-                            newCalScroll.scrollTop = newCalScroll.scrollTop + (cellRect.top - areaRect.top) - labelH;
-                        } else {
-                            newCalScroll.scrollTop = centerBlock.offsetTop;
-                        }
                     } else {
-                        // 默认进入日历视图：把当天所在的那一行对齐到视口顶部
-                        const todayCell = newCalScroll.querySelector('.calendar-day.today');
-                        if (todayCell) {
-                            const areaRect = newCalScroll.getBoundingClientRect();
-                            const cellRect = todayCell.getBoundingClientRect();
-                            const block = todayCell.closest('.calendar-month-block');
-                            const label = block && block.querySelector('.calendar-month-label');
-                            const labelH = label ? label.offsetHeight : 0;
-                            newCalScroll.scrollTop = newCalScroll.scrollTop + (cellRect.top - areaRect.top) - labelH;
-                        } else {
-                            newCalScroll.scrollTop = centerBlock.offsetTop;
-                        }
+                        // 点击“今天”或默认进入日历视图：首行显示当天所在的那一周
+                        // 锚点月不是当月时（如已滑到其他月份），退化为对齐该月顶部
+                        this._alignRailToWeekOfToday(newCalScroll, centerBlock);
                     }
                 }
             }
         }
         this._pendingRailRestore = null;
         this._preserveCalRail = false;
-        this._scrollToToday = false;
     }
  
+    // 把“今天”所在的那一周对齐到滚动区顶部（避开粘性月份标题），
+    // 使日历视图首行即为本周；锚点月不是当月时退化为对齐该月顶部
+    _alignRailToWeekOfToday(scrollArea, centerBlock) {
+        if (!scrollArea || !centerBlock) return;
+        const now = new Date();
+        const todayMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const rail = scrollArea.querySelector('.calendar-month-rail');
+        // 今天所在周可能落在相邻月份块（跨月周），故整轨查找
+        const todayCell = centerBlock.dataset.month === todayMonthKey && rail
+            ? rail.querySelector('.calendar-day.today')
+            : null;
+        if (!todayCell) {
+            scrollArea.scrollTop = centerBlock.offsetTop;
+            return;
+        }
+        const areaRect = scrollArea.getBoundingClientRect();
+        const cellRect = todayCell.getBoundingClientRect();
+        const block = todayCell.closest('.calendar-month-block');
+        const label = block && block.querySelector('.calendar-month-label');
+        const labelH = label ? label.offsetHeight : 0;
+        scrollArea.scrollTop = scrollArea.scrollTop + (cellRect.top - areaRect.top) - labelH;
+    }
+
     renderAll() {
         this.saveToLocal();
         this.renderTree();
@@ -2511,11 +2509,8 @@ class ProjectManager {
     }
  
     goToday() {
+        // 回到本月：renderMain 会把“今天所在的那一周”对齐到首行
         this.currentDate = new Date();
-        // 月视图：滚动到“当天”所在的那一行，而不是本月第 1 天
-        if (this.view === 'calendar' && this.calendarType === 'month') {
-            this._scrollToToday = true;
-        }
         this.renderMain();
     }
  
