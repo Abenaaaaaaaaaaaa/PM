@@ -1,0 +1,4 @@
+# 临时文件 / 会话产物，不入库
+.uploads/
+.screenshots/
+.trae-html-share-packages/
